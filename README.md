@@ -72,43 +72,68 @@ pip install torch transformers datasets pandas seaborn matplotlib scikit-learn
 
 ## Usage Examples
 
-### Training a Single Classifier
+### Command Line Interface (CLI)
 
-```python
-import os
-from pathlib import Path
-from utils import train_classifier
+The project provides a comprehensive command-line interface with many customizable options:
 
-# Configuration
-MODEL_PATH = "sentence-transformers/all-MiniLM-L6-v2"  # or path to local model
-DATA_PATH = "path/to/your/data.csv"
-CLASSIFIER_TYPE = "custom"  # options: standard, custom, bilstm, attention, cnn
+```bash
+# Basic usage (train CNN classifier)
+python hf_trainer_classifier.py
 
-# Train the classifier
-results = train_classifier(
-    classifier_type=CLASSIFIER_TYPE,
-    model_path=MODEL_PATH,
-    data_path=DATA_PATH,
-    num_epochs=5
-)
+# Train a specific classifier with custom settings
+python hf_trainer_classifier.py --classifier bilstm --epochs 5 --early-stopping 3 --dropout 0.5
 
-print(f"Test results: {results}")
+# Train all classifiers with custom settings
+python hf_trainer_classifier.py --train-all --batch-size 16 --metric f1_weighted
+
+# Compare existing trained models
+python hf_trainer_classifier.py --compare
 ```
 
-### Training and Comparing Multiple Classifiers
+### Available CLI Options
+
+```
+usage: hf_trainer_classifier.py [-h] [--train | --train-all | --compare]
+                               [--model-name MODEL_NAME] [--model-path MODEL_PATH]
+                               [--classifier {standard,custom,bilstm,attention,cnn}]
+                               [--classifiers CLASSIFIERS [CLASSIFIERS ...]]
+                               [--data-path DATA_PATH] [--max-length MAX_LENGTH]
+                               [--train-size TRAIN_SIZE] [--val-size VAL_SIZE]
+                               [--test-size TEST_SIZE] [--epochs EPOCHS]
+                               [--batch-size BATCH_SIZE] [--early-stopping EARLY_STOPPING]
+                               [--metric {accuracy,f1_macro,f1_weighted,matthews_correlation}]
+                               [--learning-rate LEARNING_RATE] [--weight-decay WEIGHT_DECAY]
+                               [--dropout DROPOUT] [--no-cuda] [--output-dir OUTPUT_DIR]
+                               [--save-dir SAVE_DIR]
+```
+
+### Programmatic API
+
+You can also use the project's Python API:
 
 ```python
-from utils import train_all_classifiers
+from utils import train_classifier, train_all_classifiers
 
-# Train multiple classifiers and create comparison visualizations
+# Train a single classifier
+results = train_classifier(
+    classifier_type="custom",
+    model_path="sentence-transformers/all-MiniLM-L6-v2",
+    data_path="path/to/your/data.csv",
+    num_epochs=5,
+    batch_size=8,
+    dropout_rate=0.3,
+    early_stopping_patience=2,
+    metric_for_best_model="f1_weighted"
+)
+
+# Train and compare multiple classifiers
 summary = train_all_classifiers(
     model_path="sentence-transformers/all-MiniLM-L6-v2",
     data_path="path/to/your/data.csv",
     num_epochs=5,
-    classifier_types=["standard", "custom", "bilstm", "attention", "cnn"]
+    classifier_types=["standard", "custom", "bilstm", "attention", "cnn"],
+    metric_for_best_model="matthews_correlation"
 )
-
-print(summary)
 ```
 
 ### Using a Pre-trained Classifier for Inference
@@ -220,7 +245,14 @@ HF_Trainer_Classifier/
 ├── utils/                      # Utility functions
 │   ├── __init__.py
 │   └── training_utils.py
-├── hf_trainer_classifier.py    # Main script
+├── results/                    # Training results and checkpoints
+│   └── */                      # Classifier-specific results  
+├── models/                     # Saved models
+│   └── */                      # Classifier-specific models
+├── evaluation/                 # Evaluation outputs
+│   ├── */                      # Classifier-specific metrics
+│   └── classifier_comparison.png   # Comparison visualization
+├── hf_trainer_classifier.py    # Main CLI script
 └── README.md
 ```
 
@@ -236,6 +268,7 @@ This project leverages several key components from the Hugging Face ecosystem:
    - Learning rate scheduling
    - Checkpointing
    - Evaluation during training
+   - Automatic GPU/MPS acceleration
 
 3. **Datasets Library**: Employs the `Dataset` and `DatasetDict` classes for efficient data handling with features like:
    - Memory-mapped storage

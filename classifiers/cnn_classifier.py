@@ -4,29 +4,29 @@ from transformers import AutoModel
 
 
 class CNNTextClassifier(nn.Module):
-    def __init__(self, model_path, num_labels, dropout_rate=0.1):
+    def __init__(self, model_path, num_labels, dropout_rate=0.3):
         super().__init__()
         self.transformer = AutoModel.from_pretrained(model_path)
         hidden_size = self.transformer.config.hidden_size
         self.num_labels = num_labels
 
-        # CNN layers with different kernel sizes to capture different n-gram features
-        self.conv1 = nn.Conv1d(hidden_size, 128, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv1d(hidden_size, 128, kernel_size=4, padding=2)
-        self.conv3 = nn.Conv1d(hidden_size, 128, kernel_size=5, padding=2)
+        # Reduce feature maps to combat overfitting
+        self.conv1 = nn.Conv1d(hidden_size, 64, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv1d(hidden_size, 64, kernel_size=4, padding=2)
+        self.conv3 = nn.Conv1d(hidden_size, 64, kernel_size=5, padding=2)
 
         # Pooling layers
         self.pool = nn.AdaptiveMaxPool1d(1)
 
-        # Dropout
+        # Increased dropout
         self.dropout = nn.Dropout(dropout_rate)
 
-        # Classification head
+        # Simplified classification head with L2 regularization
         self.classifier = nn.Sequential(
-            nn.Linear(384, 256),  # 384 = 128*3 (concatenated CNN features)
+            nn.Linear(192, 128),  # 192 = 64*3 (concatenated CNN features)
             nn.ReLU(),
             nn.Dropout(dropout_rate),
-            nn.Linear(256, num_labels),
+            nn.Linear(128, num_labels),
         )
 
     def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
@@ -43,7 +43,7 @@ class CNNTextClassifier(nn.Module):
         x3 = self.pool(torch.relu(self.conv3(x))).squeeze(2)  # [batch, 128]
 
         # Concatenate features from different CNN layers
-        x_cat = torch.cat((x1, x2, x3), dim=1)  # [batch, 384]
+        x_cat = torch.cat((x1, x2, x3), dim=1)  # [batch, 192]
 
         # Apply dropout
         x_drop = self.dropout(x_cat)
