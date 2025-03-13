@@ -330,7 +330,9 @@ HF_Trainer_Classifier/
 │   ├── attention_classifier.py
 │   ├── bilstm_classifier.py
 │   ├── cnn_classifier.py
-│   └── custom_classifier.py
+│   ├── custom_classifier.py
+│   ├── fourier_kan_classifier.py  # Fourier-based KAN classifier
+│   └── wavelet_kan_classifier.py  # Wavelet-based KAN classifier
 ├── models/                     # Core training components
 │   ├── __init__.py
 │   └── text_classification_trainer.py
@@ -346,6 +348,136 @@ HF_Trainer_Classifier/
 │   └── classifier_comparison.png   # Comparison visualization
 ├── hf_trainer_classifier.py    # Main CLI script
 └── README.md
+```
+
+## Classifier Architecture Diagrams
+
+Below are diagrams showing the different classifier architectures:
+
+### Standard Classifier
+```mermaid
+flowchart TB
+    input[Transformer CLS Token] --> fc[Linear Layer]
+    fc --> output[Class Logits]
+    
+    style input fill:#f9f,stroke:#333,stroke-width:2px
+    style output fill:#bbf,stroke:#333,stroke-width:2px
+```
+
+### Custom MLP Classifier
+```mermaid
+flowchart TB
+    input[Transformer CLS Token] --> fc1[Linear Layer]
+    fc1 --> relu1[ReLU]
+    relu1 --> drop1[Dropout]
+    drop1 --> fc2[Linear Layer]
+    fc2 --> relu2[ReLU]
+    drop2 --> fc3[Linear Layer]
+    fc2 --> drop2[Dropout]
+    fc3 --> output[Class Logits]
+    
+    style input fill:#f9f,stroke:#333,stroke-width:2px
+    style output fill:#bbf,stroke:#333,stroke-width:2px
+```
+
+### BiLSTM Classifier
+```mermaid
+flowchart TB
+    input[Transformer Outputs] --> bilstm[Bidirectional LSTM]
+    bilstm --> pool[Pooling Layer]
+    pool --> fc1[Linear Layer]
+    fc1 --> relu[ReLU]
+    relu --> drop[Dropout]
+    drop --> fc2[Linear Layer]
+    fc2 --> output[Class Logits]
+    
+    style input fill:#f9f,stroke:#333,stroke-width:2px
+    style output fill:#bbf,stroke:#333,stroke-width:2px
+```
+
+### Attention Classifier
+```mermaid
+flowchart TB
+    input[Transformer Outputs] --> attn[Self Attention]
+    attn --> weight[Weighted Sum]
+    weight --> fc1[Linear Layer]
+    fc1 --> relu[ReLU]
+    relu --> drop[Dropout]
+    drop --> fc2[Linear Layer]
+    fc2 --> output[Class Logits]
+    
+    style input fill:#f9f,stroke:#333,stroke-width:2px
+    style output fill:#bbf,stroke:#333,stroke-width:2px
+```
+
+### CNN Classifier
+```mermaid
+flowchart TB
+    input[Transformer Outputs] --> conv[Parallel CNNs with Different Kernel Sizes]
+    conv --> pool[Max Pooling]
+    pool --> concat[Concatenate Features]
+    concat --> fc1[Linear Layer]
+    fc1 --> relu[ReLU]
+    relu --> drop[Dropout]
+    drop --> fc2[Linear Layer]
+    fc2 --> output[Class Logits]
+    
+    style input fill:#f9f,stroke:#333,stroke-width:2px
+    style output fill:#bbf,stroke:#333,stroke-width:2px
+```
+
+### FourierKAN Classifier
+```mermaid
+flowchart TB
+    input[Transformer CLS Token] --> norm1[Layer Norm]
+    norm1 --> proj[Initial Projection]
+    proj --> funit1[FourierKAN Unit]
+    funit1 --> drop1[Dropout]
+    drop1 --> norm2[Layer Norm]
+    norm2 --> fc1[Linear Layer]
+    fc1 --> gelu[GELU]
+    gelu --> drop2[Dropout]
+    drop2 --> fc2[Linear Layer]
+    fc2 --> output[Class Logits]
+    
+    subgraph "FourierKAN Unit"
+    flayer1[Fourier Layer] --> act[GELU]
+    act --> flayer2[Fourier Layer]
+    flayer2 --> res[+ Residual]
+    end
+    
+    style input fill:#f9f,stroke:#333,stroke-width:2px
+    style output fill:#bbf,stroke:#333,stroke-width:2px
+    style funit1 fill:#ffd,stroke:#333,stroke-width:2px
+```
+
+### WaveletKAN Classifier
+```mermaid
+flowchart TB
+    input[Transformer CLS Token] --> norm1[Layer Norm]
+    norm1 --> proj[Initial Projection]
+    proj --> wunit[WaveletKAN Unit]
+    wunit --> drop1[Dropout]
+    drop1 --> norm2[Layer Norm]
+    norm2 --> fc1[Linear Layer]
+    fc1 --> gelu[GELU]
+    gelu --> drop2[Dropout]
+    drop2 --> fc2[Linear Layer]
+    fc2 --> output[Class Logits]
+    
+    subgraph "WaveletKAN Unit"
+    direction TB
+    wnorm1[Layer Norm] --> wlayer1[Wavelet Layer]
+    wlayer1 --> wact[GELU]
+    wact --> wdrop[Dropout]
+    wdrop --> wnorm2[Layer Norm]
+    wnorm2 --> wlayer2[Wavelet Layer]
+    wlayer2 --> wres[+ Residual]
+    end
+    
+    style input fill:#f9f,stroke:#333,stroke-width:2px
+    style output fill:#bbf,stroke:#333,stroke-width:2px
+    style wunit fill:#dfd,stroke:#333,stroke-width:2px
 ```
 
 ## Hugging Face Integration
