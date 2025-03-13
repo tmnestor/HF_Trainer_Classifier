@@ -59,6 +59,22 @@ Uses multiple parallel convolutional layers with different kernel sizes to captu
 # Transformer outputs -> Parallel CNNs -> MaxPooling -> Concatenate -> Linear -> ReLU -> Dropout -> Linear -> Output
 ```
 
+### FourierKAN Classifier
+Uses Kolmogorov-Arnold Networks with Fourier basis functions to represent complex transformations more efficiently, often outperforming standard MLPs.
+
+```python
+# Architecture:
+# Transformer outputs -> FourierKAN Unit 1 (Fourier Transform -> SiLU) -> Dropout -> FourierKAN Unit 2 -> Dropout -> Linear -> Output
+```
+
+### WaveletKAN Classifier
+Uses wavelets for multi-resolution analysis, capturing both frequency and spatial information simultaneously, providing better localized feature extraction than Fourier transforms.
+
+```python
+# Architecture:
+# Transformer outputs -> WaveletKAN Unit (with mixed wavelet families) -> Dropout -> Classification Head -> Output
+```
+
 ## Installation
 
 ```bash

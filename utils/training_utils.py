@@ -21,7 +21,9 @@ def train_classifier(
     train_size=0.6,
     val_size=0.2,
     test_size=0.2,
-    metric_for_best_model='matthews_correlation'
+    metric_for_best_model='matthews_correlation',
+    num_frequencies=8,
+    wavelet_type='mixed'
 ):
     """Train a single classifier and save its results"""
     # Set default output directories if not provided
@@ -77,10 +79,17 @@ def train_classifier(
 
     print(f"Training {classifier_type.upper()} classifier")
 
-    # Pass the dropout_rate to custom model types
+    # Pass the model-specific parameters
     model_params = {}
     if classifier_type in ['cnn', 'bilstm', 'attention', 'custom']:
         model_params['dropout_rate'] = dropout_rate
+    elif classifier_type == 'fourier_kan':
+        model_params['dropout_rate'] = dropout_rate
+        model_params['num_frequencies'] = num_frequencies
+    elif classifier_type == 'wavelet_kan':
+        model_params['dropout_rate'] = dropout_rate
+        model_params['num_frequencies'] = num_frequencies
+        model_params['wavelet_type'] = wavelet_type
         
     # Setup early stopping in callback
     callback_params = {
@@ -137,11 +146,13 @@ def train_all_classifiers(
     val_size=0.2,
     test_size=0.2,
     metric_for_best_model='matthews_correlation',
+    num_frequencies=8,
+    wavelet_type='mixed',
     classifier_types=None
 ):
     """Train multiple classifiers and create a comparison"""
     if classifier_types is None:
-        classifier_types = ["standard", "custom", "bilstm", "attention", "cnn"]
+        classifier_types = ["standard", "custom", "bilstm", "attention", "cnn", "fourier_kan", "wavelet_kan"]
 
     results = {}
 
@@ -171,7 +182,9 @@ def train_all_classifiers(
                 train_size=train_size,
                 val_size=val_size,
                 test_size=test_size,
-                metric_for_best_model=metric_for_best_model
+                metric_for_best_model=metric_for_best_model,
+                num_frequencies=num_frequencies,
+                wavelet_type=wavelet_type
             )
             results[classifier_type] = test_results
         except Exception as e:
