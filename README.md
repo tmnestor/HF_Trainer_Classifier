@@ -372,8 +372,8 @@ flowchart TB
     relu1 --> drop1[Dropout]
     drop1 --> fc2[Linear Layer]
     fc2 --> relu2[ReLU]
+    relu2 --> drop2[Dropout]
     drop2 --> fc3[Linear Layer]
-    fc2 --> drop2[Dropout]
     fc3 --> output[Class Logits]
     
     style input fill:#f9f,stroke:#333,stroke-width:2px
@@ -431,8 +431,8 @@ flowchart TB
 flowchart TB
     input[Transformer CLS Token] --> norm1[Layer Norm]
     norm1 --> proj[Initial Projection]
-    proj --> funit1[FourierKAN Unit]
-    funit1 --> drop1[Dropout]
+    proj --> funit[FourierKAN Unit]
+    funit --> drop1[Dropout]
     drop1 --> norm2[Layer Norm]
     norm2 --> fc1[Linear Layer]
     fc1 --> gelu[GELU]
@@ -448,7 +448,7 @@ flowchart TB
     
     style input fill:#f9f,stroke:#333,stroke-width:2px
     style output fill:#bbf,stroke:#333,stroke-width:2px
-    style funit1 fill:#ffd,stroke:#333,stroke-width:2px
+    style funit fill:#ffd,stroke:#333,stroke-width:2px
 ```
 
 ### WaveletKAN Classifier
@@ -466,7 +466,6 @@ flowchart TB
     fc2 --> output[Class Logits]
     
     subgraph "WaveletKAN Unit"
-    direction TB
     wnorm1[Layer Norm] --> wlayer1[Wavelet Layer]
     wlayer1 --> wact[GELU]
     wact --> wdrop[Dropout]
