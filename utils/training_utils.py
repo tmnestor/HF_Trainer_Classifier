@@ -23,6 +23,7 @@ def train_classifier(
     test_size=0.2,
     metric_for_best_model='matthews_correlation',
     num_frequencies=8,
+    num_wavelets=16,
     wavelet_type='mixed'
 ):
     """Train a single classifier and save its results"""
@@ -88,7 +89,7 @@ def train_classifier(
         model_params['num_frequencies'] = num_frequencies
     elif classifier_type == 'wavelet_kan':
         model_params['dropout_rate'] = dropout_rate
-        model_params['num_frequencies'] = num_frequencies
+        model_params['num_wavelets'] = num_wavelets
         model_params['wavelet_type'] = wavelet_type
         
     # Setup early stopping in callback
@@ -147,6 +148,7 @@ def train_all_classifiers(
     test_size=0.2,
     metric_for_best_model='matthews_correlation',
     num_frequencies=8,
+    num_wavelets=16,
     wavelet_type='mixed',
     classifier_types=None
 ):
@@ -184,6 +186,7 @@ def train_all_classifiers(
                 test_size=test_size,
                 metric_for_best_model=metric_for_best_model,
                 num_frequencies=num_frequencies,
+                num_wavelets=num_wavelets,
                 wavelet_type=wavelet_type
             )
             results[classifier_type] = test_results
@@ -199,8 +202,9 @@ def train_all_classifiers(
     summary.reset_index(inplace=True)
 
     # Save summary
-    summary_path = f"{output_dir}/classifier_results_summary.csv"
-    os.makedirs(os.path.dirname(summary_path), exist_ok=True)
+    output_dir_path = Path(output_dir)
+    summary_path = output_dir_path / "classifier_results_summary.csv"
+    output_dir_path.mkdir(parents=True, exist_ok=True)
     summary.to_csv(summary_path, index=False)
     print(f"\nResults summary saved to {summary_path}")
 
@@ -217,20 +221,20 @@ def compare_classifiers(classifiers=None):
     if classifiers is None:
         classifiers = ["standard", "custom", "bilstm", "attention", "cnn"]
 
-    # Set up the figure with 2x2 grid
-    fig, axes = plt.subplots(2, 2, figsize=(18, 14))
+    # Set up the figure with 3x2 grid (to include precision and recall)
+    fig, axes = plt.subplots(3, 2, figsize=(18, 21))
     fig.suptitle("Classifier Comparison", fontsize=18)
 
     # For consistent colors across plots
     colors = sns.color_palette("husl", len(classifiers))
 
-    # Plot Loss, Accuracy, F1, and Matthews Correlation for each classifier
+    # Plot Loss, Accuracy, Precision, Recall, F1, and Matthews Correlation
     for i, classifier in enumerate(classifiers):
-        metrics_path = f"./evaluation/{classifier}/metrics.csv"
+        metrics_path = Path("evaluation") / classifier / "metrics.csv"
 
         try:
             # Check if metrics file exists
-            if not os.path.exists(metrics_path):
+            if not metrics_path.exists():
                 print(f"No metrics found for {classifier} classifier")
                 continue
 
@@ -264,14 +268,36 @@ def compare_classifiers(classifiers=None):
                         color=colors[i],
                     )
                 
-                # Plot F1 Score (weighted)
-                if "eval_f1_weighted" in eval_metrics.columns:
+                # Plot Precision
+                if "eval_precision" in eval_metrics.columns:
                     sns.lineplot(
                         x="epoch",
-                        y="eval_f1_weighted",
+                        y="eval_precision",
                         data=eval_metrics,
                         label=f"{classifier.capitalize()}",
                         ax=axes[1, 0],
+                        color=colors[i],
+                    )
+                
+                # Plot Recall
+                if "eval_recall" in eval_metrics.columns:
+                    sns.lineplot(
+                        x="epoch",
+                        y="eval_recall",
+                        data=eval_metrics,
+                        label=f"{classifier.capitalize()}",
+                        ax=axes[1, 1],
+                        color=colors[i],
+                    )
+                
+                # Plot F1 Score (macro)
+                if "eval_f1_macro" in eval_metrics.columns:
+                    sns.lineplot(
+                        x="epoch",
+                        y="eval_f1_macro",
+                        data=eval_metrics,
+                        label=f"{classifier.capitalize()}",
+                        ax=axes[2, 0],
                         color=colors[i],
                     )
                 
@@ -282,7 +308,7 @@ def compare_classifiers(classifiers=None):
                         y="eval_matthews_correlation",
                         data=eval_metrics,
                         label=f"{classifier.capitalize()}",
-                        ax=axes[1, 1],
+                        ax=axes[2, 1],
                         color=colors[i],
                     )
         except Exception as e:
@@ -299,23 +325,33 @@ def compare_classifiers(classifiers=None):
     axes[0, 1].set_ylabel("Accuracy", fontsize=12)
     axes[0, 1].legend(fontsize=10)
     
-    axes[1, 0].set_title("F1 Score (Weighted) Comparison", fontsize=14)
+    axes[1, 0].set_title("Precision Comparison", fontsize=14)
     axes[1, 0].set_xlabel("Epoch", fontsize=12)
-    axes[1, 0].set_ylabel("F1 Score", fontsize=12)
+    axes[1, 0].set_ylabel("Precision", fontsize=12)
     axes[1, 0].legend(fontsize=10)
     
-    axes[1, 1].set_title("Matthews Correlation Comparison", fontsize=14)
+    axes[1, 1].set_title("Recall Comparison", fontsize=14)
     axes[1, 1].set_xlabel("Epoch", fontsize=12)
-    axes[1, 1].set_ylabel("MCC", fontsize=12)
+    axes[1, 1].set_ylabel("Recall", fontsize=12)
     axes[1, 1].legend(fontsize=10)
+    
+    axes[2, 0].set_title("F1 Score (Macro) Comparison", fontsize=14)
+    axes[2, 0].set_xlabel("Epoch", fontsize=12)
+    axes[2, 0].set_ylabel("F1 Score", fontsize=12)
+    axes[2, 0].legend(fontsize=10)
+    
+    axes[2, 1].set_title("Matthews Correlation Comparison", fontsize=14)
+    axes[2, 1].set_xlabel("Epoch", fontsize=12)
+    axes[2, 1].set_ylabel("MCC", fontsize=12)
+    axes[2, 1].legend(fontsize=10)
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])  # Adjust for suptitle
 
     # Save the comparison plot
-    save_path = "./evaluation/classifier_comparison.png"
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    save_path = Path("evaluation") / "classifier_comparison.png"
+    save_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(save_path, dpi=150)
     plt.close()
 
     print(f"Classifier comparison saved to {save_path}")
-    return save_path
+    return str(save_path)

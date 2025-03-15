@@ -5,7 +5,7 @@ from transformers import AutoModel
 class BiLSTMClassifier(nn.Module):
     def __init__(self, model_path, num_labels, lstm_hidden_size=256, dropout_rate=0.1):
         super().__init__()
-        self.transformer = AutoModel.from_pretrained(model_path)
+        self.transformer = AutoModel.from_pretrained(model_path, local_files_only=True)
         hidden_size = self.transformer.config.hidden_size
         self.num_labels = num_labels
 

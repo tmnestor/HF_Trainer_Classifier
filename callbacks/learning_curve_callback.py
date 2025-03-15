@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -8,10 +9,11 @@ from transformers import TrainerCallback, EarlyStoppingCallback
 class LearningCurveCallback(TrainerCallback):
     """Callback to track training and evaluation metrics for learning curves"""
 
-    def __init__(self, eval_dataset=None, model_type="standard", patience=2):
+    def __init__(self, eval_dataset=None, model_type="standard", patience=2, pruning_callback=None):
         self.eval_dataset = eval_dataset
         self.model_type = model_type
         self.patience = patience
+        self.pruning_callback = pruning_callback
         # Initialize empty DataFrame for metrics
         self.metrics_df = pd.DataFrame()
         
@@ -43,6 +45,10 @@ class LearningCurveCallback(TrainerCallback):
             
             # First evaluation or new best
             if self.best_metric is None or current_metric > self.best_metric:
+                # Only print first evaluation and improvements
+                if self.best_metric is not None:
+                    print(f"Improved: {current_metric:.4f} (prev: {self.best_metric:.4f})")
+                
                 self.best_metric = current_metric
                 self.no_improvement_count = 0
             else:
@@ -52,15 +58,30 @@ class LearningCurveCallback(TrainerCallback):
             if self.no_improvement_count >= self.patience:
                 print(f"\nEarly stopping triggered after {self.no_improvement_count} evaluations without improvement")
                 control.should_training_stop = True
+            
+            # If we have a pruning callback, call it with the evaluation metrics
+            if self.pruning_callback is not None:
+                try:
+                    import optuna
+                    
+                    # Check for pruning without verbose output
+                    pruning_result = self.pruning_callback.on_evaluate(logs)
+                    
+                except optuna.exceptions.TrialPruned:
+                    print("Trial pruned")
+                    control.should_training_stop = True
+                    # Re-raise to ensure pruning is properly reported to Optuna
+                    raise
 
     def plot_learning_curves(self, save_path=None):
         """Plot learning curves from collected metrics"""
         # Use classifier-specific path if not provided
         if save_path is None:
-            save_path = f"./evaluation/{self.model_type}/learning_curves.png"
+            save_path = Path("evaluation") / self.model_type / "learning_curves.png"
 
         # Create the directory if it doesn't exist
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        save_path = Path(save_path)  # Ensure it's a Path object
+        save_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Filter for training and evaluation metrics
         train_metrics = self.metrics_df.filter(regex="^(loss|train|epoch|step)").dropna(
@@ -112,8 +133,8 @@ class LearningCurveCallback(TrainerCallback):
             ax.set_ylabel("Accuracy")
             ax.legend()
             
-        # Plot F1 Score curves
-        if "eval_f1_macro" in eval_metrics.columns and "eval_f1_weighted" in eval_metrics.columns:
+        # Plot F1 Macro
+        if "eval_f1_macro" in eval_metrics.columns:
             ax = axes[1, 0]
             sns.lineplot(
                 x="epoch",
@@ -122,14 +143,7 @@ class LearningCurveCallback(TrainerCallback):
                 label="F1 Macro",
                 ax=ax,
             )
-            sns.lineplot(
-                x="epoch",
-                y="eval_f1_weighted",
-                data=eval_metrics,
-                label="F1 Weighted",
-                ax=ax,
-            )
-            ax.set_title("F1 Scores vs. Epoch")
+            ax.set_title("F1 Macro vs. Epoch")
             ax.set_xlabel("Epoch")
             ax.set_ylabel("F1 Score")
             ax.legend()
@@ -153,14 +167,18 @@ class LearningCurveCallback(TrainerCallback):
         plt.savefig(save_path)
         plt.close()
 
-        return save_path
+        return str(save_path)
 
     def save_metrics(self, save_path=None):
         """Save metrics to CSV"""
         # Use classifier-specific path if not provided
         if save_path is None:
-            save_path = f"./evaluation/{self.model_type}/metrics.csv"
-
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            save_path = Path("evaluation") / self.model_type / "metrics.csv"
+            
+        # Ensure save_path is a Path object
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Save metrics to CSV
         self.metrics_df.to_csv(save_path, index=False)
-        return save_path
+        return str(save_path)

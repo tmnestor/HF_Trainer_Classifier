@@ -147,7 +147,7 @@ class FourierKANClassifier(nn.Module):
     """
     def __init__(self, model_path, num_labels, dropout_rate=0.1, num_frequencies=8):
         super().__init__()
-        self.transformer = AutoModel.from_pretrained(model_path)
+        self.transformer = AutoModel.from_pretrained(model_path, local_files_only=True)
         hidden_size = self.transformer.config.hidden_size
         self.num_labels = num_labels
         

@@ -10,12 +10,16 @@ This project provides a flexible and extensible solution for text classification
 2. Compare performance across different architectures
 3. Visualize learning curves and metrics during training
 4. Apply custom optimizers with different learning rates for transformer and classifier components
+5. Automatically tune hyperparameters to find optimal configurations
+6. Use advanced neural architectures including Kolmogorov-Arnold Networks (KANs)
 
 ## Key Features
 
-- **Multiple Classifier Architectures**: Standard linear head, custom MLP, BiLSTM, self-attention, and CNN-based classifiers
+- **Multiple Classifier Architectures**: Standard linear head, custom MLP, BiLSTM, self-attention, CNN-based, and KAN-based classifiers
+- **Advanced KAN Architectures**: Fourier-based and Wavelet-based implementations of Kolmogorov-Arnold Networks
 - **Differential Learning Rates**: Apply lower learning rates to pre-trained components and higher rates to new classifier layers
 - **Integrated Evaluation**: Built-in metrics tracking and visualization
+- **Hyperparameter Optimization**: Automatic tuning of hyperparameters using Optuna with aggressive pruning
 - **Modular Design**: Easily extend with your own architectures or components
 
 ## Classifier Architectures
@@ -130,7 +134,22 @@ git clone https://github.com/yourusername/hf-trainer-classifier.git
 cd hf-trainer-classifier
 
 # Install dependencies
-pip install torch transformers datasets pandas seaborn matplotlib scikit-learn
+pip install -r requirements.txt
+```
+
+The requirements.txt file includes all necessary dependencies:
+
+```
+torch>=1.10.0
+transformers>=4.16.0
+datasets>=2.0.0
+scikit-learn>=1.0.0
+matplotlib>=3.5.0
+seaborn>=0.11.0
+pandas>=1.3.0
+numpy>=1.20.0
+optuna>=3.0.0
+pyyaml>=6.0.0
 ```
 
 ## Usage Examples
@@ -151,16 +170,25 @@ python hf_trainer_classifier.py --classifier fourier_kan --num-frequencies 16
 python hf_trainer_classifier.py --classifier wavelet_kan --wavelet-type mixed --num-frequencies 16
 
 # Train all classifiers with custom settings
-python hf_trainer_classifier.py --train-all --batch-size 16 --metric f1_weighted
+python hf_trainer_classifier.py --train-all --batch-size 16 --metric f1_macro
 
 # Compare existing trained models
 python hf_trainer_classifier.py --compare
+
+# Tune hyperparameters for a single classifier
+python hf_trainer_classifier.py --tune --classifier fourier_kan --n-trials 20 --metric precision
+
+# Tune hyperparameters for all classifiers
+python hf_trainer_classifier.py --tune-all --n-trials 15 --tuning-epochs 3 --metric matthews_correlation
+
+# Train with hyperparameters loaded from previous tuning
+python hf_trainer_classifier.py --train --classifier wavelet_kan
 ```
 
 ### Available CLI Options
 
 ```
-usage: hf_trainer_classifier.py [-h] [--train | --train-all | --compare]
+usage: hf_trainer_classifier.py [-h] [--train | --train-all | --compare | --tune | --tune-all]
                                [--model-name MODEL_NAME] [--model-path MODEL_PATH]
                                [--classifier {standard,custom,bilstm,attention,cnn,fourier_kan,wavelet_kan}]
                                [--classifiers CLASSIFIERS [CLASSIFIERS ...]]
@@ -168,9 +196,12 @@ usage: hf_trainer_classifier.py [-h] [--train | --train-all | --compare]
                                [--train-size TRAIN_SIZE] [--val-size VAL_SIZE]
                                [--test-size TEST_SIZE] [--epochs EPOCHS]
                                [--batch-size BATCH_SIZE] [--early-stopping EARLY_STOPPING]
-                               [--metric {accuracy,f1_macro,f1_weighted,matthews_correlation}]
+                               [--metric {accuracy,precision,recall,f1_macro,matthews_correlation}]
+                               [--n-trials N_TRIALS] [--tuning-epochs TUNING_EPOCHS]
+                               [--hyperparams-dir HYPERPARAMS_DIR]
                                [--learning-rate LEARNING_RATE] [--weight-decay WEIGHT_DECAY]
                                [--dropout DROPOUT] [--num-frequencies NUM_FREQUENCIES]
+                               [--num-wavelets NUM_WAVELETS]
                                [--wavelet-type {mixed,haar,mexican,morlet}]
                                [--no-cuda] [--output-dir OUTPUT_DIR] [--save-dir SAVE_DIR]
 ```
@@ -180,25 +211,31 @@ usage: hf_trainer_classifier.py [-h] [--train | --train-all | --compare]
 You can also use the project's Python API:
 
 ```python
-from utils import train_classifier, train_all_classifiers
+import os
+from pathlib import Path
+from utils import train_classifier, train_all_classifiers, tune_classifier, tune_all_classifiers
+
+# Set paths from environment variables using pathlib
+model_path = Path(os.environ.get("LLM_MODELS_PATH", ".")) / "your-base-model-name"
+data_path = Path(os.environ.get("DATADIR", ".")) / "your-dataset-folder" / "your-data.csv"
 
 # Train a single classifier
 results = train_classifier(
     classifier_type="custom",
-    model_path="sentence-transformers/all-MiniLM-L6-v2",
-    data_path="path/to/your/data.csv",
+    model_path=model_path,
+    data_path=data_path,
     num_epochs=5,
     batch_size=8,
     dropout_rate=0.3,
     early_stopping_patience=2,
-    metric_for_best_model="f1_weighted"
+    metric_for_best_model="f1_macro"
 )
 
 # Train a FourierKAN classifier
 results = train_classifier(
     classifier_type="fourier_kan",
-    model_path="sentence-transformers/all-MiniLM-L6-v2",
-    data_path="path/to/your/data.csv",
+    model_path=model_path,
+    data_path=data_path,
     num_epochs=5,
     num_frequencies=16,
     dropout_rate=0.2
@@ -207,47 +244,89 @@ results = train_classifier(
 # Train a WaveletKAN classifier
 results = train_classifier(
     classifier_type="wavelet_kan",
-    model_path="sentence-transformers/all-MiniLM-L6-v2",
-    data_path="path/to/your/data.csv",
+    model_path=model_path,
+    data_path=data_path,
     num_epochs=5,
-    num_frequencies=16,
+    num_wavelets=16,  # Use num_wavelets parameter instead of num_frequencies
     wavelet_type="mixed"
 )
 
 # Train and compare multiple classifiers
 summary = train_all_classifiers(
-    model_path="sentence-transformers/all-MiniLM-L6-v2",
-    data_path="path/to/your/data.csv",
+    model_path=model_path,
+    data_path=data_path,
     num_epochs=5,
     classifier_types=["standard", "custom", "bilstm", "attention", "cnn", "fourier_kan", "wavelet_kan"],
     metric_for_best_model="matthews_correlation",
-    num_frequencies=16,
-    wavelet_type="mixed"
+    num_frequencies=16,  # For FourierKAN
+    num_wavelets=16,     # For WaveletKAN
+    wavelet_type="mixed" # For WaveletKAN
 )
+
+# Tune hyperparameters for a classifier
+best_params = tune_classifier(
+    classifier_type="fourier_kan",
+    model_path=model_path,
+    data_path=data_path,
+    n_trials=20,
+    num_epochs=3,
+    metric_for_best_model="precision",
+    save_dir="./hyperparams"
+)
+
+# Tune hyperparameters for all classifiers and find the best one
+best_configs = tune_all_classifiers(
+    model_path=model_path,
+    data_path=data_path,
+    n_trials=15,
+    num_epochs=3,
+    metric_for_best_model="matthews_correlation"
+)
+
+# Load best hyperparameter configuration for a classifier
+from utils import load_best_config
+config = load_best_config(
+    classifier_type="wavelet_kan",
+    output_dir="./hyperparams"
+)
+
+# Train with previously tuned hyperparameters
+if config:
+    results = train_classifier(
+        classifier_type="wavelet_kan",
+        model_path=model_path,
+        data_path=data_path,
+        num_epochs=10,
+        **config["best_params"]  # Unpack the best parameters
+    )
 ```
 
 ### Using a Pre-trained Classifier for Inference
 
 ```python
+import os
 import torch
+import json
+from pathlib import Path
 from transformers import AutoTokenizer
 from models import TextClassificationTrainer
 from classifiers import CustomClassifier, FourierKANClassifier, WaveletKANClassifier
 
-# Load the model and tokenizer
-model_path = "path/to/saved/model"
-tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+# Load the model and tokenizer (using local_files_only to prevent HF downloads)
+model_path = Path("path/to/saved/model")
+base_model_path = Path(os.environ.get("LLM_MODELS_PATH", ".")) / "your-base-model-name"
+tokenizer = AutoTokenizer.from_pretrained(base_model_path, local_files_only=True)
 
 # Load label mapping
-import json
-with open(f"{model_path}/label_mapping.json", "r") as f:
+with open(model_path / "label_mapping.json", "r") as f:
     mapping = json.load(f)
     id_to_label = mapping["id_to_label"]
 
 # Load the model (choose the appropriate classifier class)
-# model = CustomClassifier.from_pretrained(model_path)
-# model = FourierKANClassifier.from_pretrained(model_path)
-model = WaveletKANClassifier.from_pretrained(model_path)
+# model = CustomClassifier(base_model_path, num_labels=len(id_to_label))
+# model = FourierKANClassifier(base_model_path, num_labels=len(id_to_label))
+model = WaveletKANClassifier(base_model_path, num_labels=len(id_to_label))
+model.load_state_dict(torch.load(model_path / "pytorch_model.bin"))
 model.eval()
 
 # Prepare input text
@@ -267,17 +346,21 @@ print(f"Predicted class: {predicted_label}")
 ### Custom Dataset Preparation
 
 ```python
+import os
+from pathlib import Path
 from models import TextClassificationTrainer
 
-# Initialize trainer
+# Initialize trainer with local model path from environment variable
+model_path = Path(os.environ.get("LLM_MODELS_PATH", ".")) / "your-base-model-name"
 trainer = TextClassificationTrainer(
-    model_path="sentence-transformers/all-MiniLM-L6-v2",
+    model_path=model_path,
     max_length=128  # Increase max sequence length for longer texts
 )
 
 # Prepare dataset with custom split and column names
+data_path = Path(os.environ.get("DATADIR", ".")) / "your-dataset-folder" / "your-data.csv"
 tokenized_datasets = trainer.prepare_data(
-    dataset_path="path/to/your/data.csv",
+    dataset_path=data_path,
     text_column="content",  # Custom text column name
     label_column="category",  # Custom label column name
     train_size=0.7,
@@ -294,28 +377,34 @@ trainer.train(tokenized_datasets)
 ### Fine-tuning with Custom Training Parameters
 
 ```python
+import os
+from pathlib import Path
 from models import TextClassificationTrainer
 
-# Initialize trainer with custom hyperparameters
+# Initialize trainer with custom hyperparameters using local paths
+model_path = Path(os.environ.get("LLM_MODELS_PATH", ".")) / "your-base-model-name"
+output_dir = Path("custom_results")
 trainer = TextClassificationTrainer(
-    model_path="sentence-transformers/all-MiniLM-L6-v2",
+    model_path=model_path,
     num_labels=5,
     max_length=64,
-    output_dir="./custom_results",
+    output_dir=output_dir,
     learning_rate=3e-5,
     batch_size=16,
     num_epochs=8,
     weight_decay=0.05
 )
 
-# Prepare data and train
-tokenized_datasets = trainer.prepare_data("path/to/your/data.csv")
+# Prepare data using environment variable for data path
+data_path = Path(os.environ.get("DATADIR", ".")) / "your-dataset-folder" / "your-data.csv"
+tokenized_datasets = trainer.prepare_data(data_path)
 trainer.setup_trainer(tokenized_datasets, model_type="attention")
 trainer.train(tokenized_datasets)
 
 # Evaluate and save
 test_results = trainer.evaluate(tokenized_datasets["test"])
-trainer.save_model("./saved_models/attention_model")
+save_path = Path("saved_models") / "attention_model"
+trainer.save_model(save_path)
 ```
 
 ## Project Structure
@@ -324,7 +413,7 @@ trainer.save_model("./saved_models/attention_model")
 HF_Trainer_Classifier/
 ├── callbacks/                  # Training callbacks
 │   ├── __init__.py
-│   └── learning_curve_callback.py
+│   └── learning_curve_callback.py  # Custom callback for tracking metrics and generating plots
 ├── classifiers/                # Model architectures
 │   ├── __init__.py
 │   ├── attention_classifier.py
@@ -332,21 +421,28 @@ HF_Trainer_Classifier/
 │   ├── cnn_classifier.py
 │   ├── custom_classifier.py
 │   ├── fourier_kan_classifier.py  # Fourier-based KAN classifier
-│   └── wavelet_kan_classifier.py  # Wavelet-based KAN classifier
+│   └── wavelet_kan_classifier.py  # Wavelet-based KAN classifier with multiple wavelet families
 ├── models/                     # Core training components
 │   ├── __init__.py
 │   └── text_classification_trainer.py
 ├── utils/                      # Utility functions
 │   ├── __init__.py
-│   └── training_utils.py
+│   ├── training_utils.py       # Training and evaluation utilities
+│   └── tuning_utils.py         # Hyperparameter optimization with Optuna
+├── hyperparams/                # Saved hyperparameter configurations
+│   ├── all_best_configs.yaml   # Summary of all best configs
+│   ├── best_overall_classifier.yaml # Best classifier information
+│   └── *_best_config.yaml      # Classifier-specific best hyperparameters
+│   └── */                      # Directory with training arguments for each classifier
 ├── results/                    # Training results and checkpoints
 │   └── */                      # Classifier-specific results  
 ├── models/                     # Saved models
 │   └── */                      # Classifier-specific models
 ├── evaluation/                 # Evaluation outputs
-│   ├── */                      # Classifier-specific metrics
+│   ├── */                      # Classifier-specific metrics and learning curves
 │   └── classifier_comparison.png   # Comparison visualization
 ├── hf_trainer_classifier.py    # Main CLI script
+├── requirements.txt            # Project dependencies
 └── README.md
 ```
 
@@ -479,6 +575,37 @@ flowchart TB
     style wunit fill:#dfd,stroke:#333,stroke-width:2px
 ```
 
+## Advanced Features
+
+### Environment Variable Integration
+
+The project is designed to work entirely with local models and data via environment variables:
+
+- **$LLM_MODELS_PATH**: Points to the directory containing all model files
+- **$DATADIR**: Points to the directory containing all datasets
+- **No Downloads Required**: Uses `local_files_only=True` in all model loading
+- **Production-Ready**: Designed to work in environments without internet access
+
+### Hyperparameter Tuning with Optuna
+
+The project includes comprehensive hyperparameter tuning support using Optuna:
+
+- **Smart Trial Pruning**: Early detection and termination of underperforming trials
+- **Persistent Storage**: Tuning results are stored in SQLite databases for resuming interrupted sessions
+- **Targeted Parameter Spaces**: Customized parameter ranges for each classifier type
+- **Trial Analysis**: Detailed metrics and analysis of each trial's performance
+- **Configuration Management**: Save and load best hyperparameter configurations
+
+### Wavelet-based KAN Implementation
+
+The WaveletKAN classifier incorporates advanced features:
+
+- **Multiple Wavelet Families**: Support for Haar, Mexican Hat, and Morlet wavelets
+- **Mixed Wavelet Mode**: Combine different wavelet types for richer feature extraction
+- **High-Frequency Optimization**: Special optimization for models with large numbers of wavelets
+- **Multi-resolution Analysis**: Capture patterns at different scales simultaneously
+- **Specialized Loss Functions**: Adaptive loss functions to prevent class imbalance issues
+
 ## Hugging Face Integration
 
 This project leverages several key components from the Hugging Face ecosystem:
@@ -492,6 +619,7 @@ This project leverages several key components from the Hugging Face ecosystem:
    - Checkpointing
    - Evaluation during training
    - Automatic GPU/MPS acceleration
+   - Support for Apple Silicon via MPS device
 
 3. **Datasets Library**: Employs the `Dataset` and `DatasetDict` classes for efficient data handling with features like:
    - Memory-mapped storage

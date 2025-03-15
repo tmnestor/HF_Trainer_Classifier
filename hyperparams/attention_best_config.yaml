@@ -1,0 +1,20 @@
+best_params:
+  batch_size: 32
+  dropout_rate: 0.10201892643823217
+  learning_rate: 4.405906904327826e-05
+  weight_decay: 0.05305636123927886
+best_value: 0.9323618828968963
+classifier_type: attention
+metric: matthews_correlation
+test_results:
+  epoch: 7.0
+  eval_accuracy: 0.9370786516853933
+  eval_f1_macro: 0.935279383044042
+  eval_loss: 0.22966766357421875
+  eval_matthews_correlation: 0.9213008816856676
+  eval_precision: 0.9370625452492778
+  eval_pred_distribution: '{0: 81, 1: 101, 2: 102, 3: 71, 4: 90}'
+  eval_recall: 0.9347107128113507
+  eval_runtime: 3.7588
+  eval_samples_per_second: 118.39
+  eval_steps_per_second: 3.725

@@ -2,7 +2,13 @@ import os
 import torch
 import argparse
 from pathlib import Path
-from utils import train_classifier, train_all_classifiers, compare_classifiers
+from utils import (
+    train_classifier, 
+    train_all_classifiers, 
+    compare_classifiers,
+    tune_classifier,
+    tune_all_classifiers
+)
 
 
 def parse_arguments():
@@ -29,6 +35,12 @@ def parse_arguments():
     )
     action_group.add_argument(
         "--compare", action="store_true", help="Compare trained models"
+    )
+    action_group.add_argument(
+        "--tune", action="store_true", help="Tune hyperparameters for a single classifier"
+    )
+    action_group.add_argument(
+        "--tune-all", action="store_true", help="Tune hyperparameters for all classifier types"
     )
 
     # Model arguments
@@ -106,8 +118,29 @@ def parse_arguments():
         "--metric",
         type=str,
         default="matthews_correlation",
-        choices=["accuracy", "f1_macro", "f1_weighted", "matthews_correlation"],
+        choices=["accuracy", "precision", "recall", "f1_macro", "matthews_correlation"],
         help="Metric to use for model selection and early stopping",
+    )
+    
+    # Tuning parameters
+    tuning_group = parser.add_argument_group("Hyperparameter Tuning")
+    tuning_group.add_argument(
+        "--n-trials",
+        type=int,
+        default=20,
+        help="Number of hyperparameter optimization trials",
+    )
+    tuning_group.add_argument(
+        "--tuning-epochs",
+        type=int,
+        default=5,
+        help="Number of epochs for each tuning trial",
+    )
+    tuning_group.add_argument(
+        "--hyperparams-dir",
+        type=str,
+        default="./hyperparams",
+        help="Directory to save hyperparameter configurations",
     )
 
     # Optimization parameters
@@ -125,7 +158,11 @@ def parse_arguments():
     )
     optimization_group.add_argument(
         "--num-frequencies", type=int, default=16, 
-        help="Number of frequency/wavelet components for KAN classifiers"
+        help="Number of frequency components for FourierKAN classifier"
+    )
+    optimization_group.add_argument(
+        "--num-wavelets", type=int, default=16, 
+        help="Number of wavelet components for WaveletKAN classifier"
     )
     optimization_group.add_argument(
         "--wavelet-type", type=str, default="mixed", 
@@ -153,7 +190,7 @@ def parse_arguments():
     args = parser.parse_args()
 
     # Default to training a single classifier if no action specified
-    if not (args.train or args.train_all or args.compare):
+    if not (args.train or args.train_all or args.compare or args.tune or args.tune_all):
         args.train = True
 
     # Set default model path if not provided
@@ -228,12 +265,13 @@ def main():
     }
     
     # Add KAN-specific parameters if needed
-    if args.classifier in ['fourier_kan', 'wavelet_kan'] or (hasattr(args, 'classifiers') and 
-       any(c in ['fourier_kan', 'wavelet_kan'] for c in args.classifiers)):
+    # For FourierKAN
+    if args.classifier == 'fourier_kan' or (hasattr(args, 'classifiers') and 'fourier_kan' in args.classifiers):
         train_params['num_frequencies'] = args.num_frequencies
         
-    # Add WaveletKAN-specific parameters
+    # For WaveletKAN
     if args.classifier == 'wavelet_kan' or (hasattr(args, 'classifiers') and 'wavelet_kan' in args.classifiers):
+        train_params['num_wavelets'] = args.num_wavelets
         train_params['wavelet_type'] = args.wavelet_type
 
     if args.train:
@@ -249,6 +287,50 @@ def main():
     elif args.compare:
         print("\nComparing trained models...")
         compare_classifiers(classifiers=args.classifiers)
+        
+    elif args.tune:
+        print(f"\n{'=' * 50}")
+        print(f"Tuning {args.classifier.upper()} classifier hyperparameters")
+        print(f"{'=' * 50}\n")
+        
+        tune_params = {
+            "classifier_type": args.classifier,
+            "model_path": args.model_path,
+            "data_path": args.data_path,
+            "n_trials": args.n_trials,
+            "num_epochs": args.tuning_epochs,
+            "metric_for_best_model": args.metric,
+            "output_dir": output_dir,
+            "save_dir": args.hyperparams_dir,
+            "max_length": args.max_length,
+            "train_size": args.train_size,
+            "val_size": args.val_size,
+            "test_size": args.test_size,
+        }
+        
+        tune_classifier(**tune_params)
+        
+    elif args.tune_all:
+        print(f"\n{'=' * 50}")
+        print(f"Tuning ALL classifier hyperparameters")
+        print(f"{'=' * 50}\n")
+        
+        tune_params = {
+            "model_path": args.model_path,
+            "data_path": args.data_path,
+            "classifier_types": args.classifiers,
+            "n_trials": args.n_trials,
+            "num_epochs": args.tuning_epochs,
+            "metric_for_best_model": args.metric,
+            "output_dir": output_dir,
+            "save_dir": args.hyperparams_dir,
+            "max_length": args.max_length,
+            "train_size": args.train_size,
+            "val_size": args.val_size,
+            "test_size": args.test_size,
+        }
+        
+        tune_all_classifiers(**tune_params)
 
 
 if __name__ == "__main__":

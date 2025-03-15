@@ -79,6 +79,6 @@ CLAUDE.md
 
 results/
 
-models/
-
 evaluation/
+
+*.db

@@ -1,0 +1,23 @@
+best_params:
+  batch_size: 32
+  dropout_rate: 0.2670563504302229
+  learning_rate: 0.001
+  num_wavelets: 32
+  warmup_ratio: 0.08845969331307063
+  wavelet_type: mixed
+  weight_decay: 0.01
+best_value: 0.9324421656270837
+classifier_type: wavelet_kan
+metric: matthews_correlation
+test_results:
+  epoch: 8.0
+  eval_accuracy: 0.9393258426966292
+  eval_f1_macro: 0.9371296867974405
+  eval_loss: 0.6333589553833008
+  eval_matthews_correlation: 0.9244434391818324
+  eval_precision: 0.9405676623845638
+  eval_pred_distribution: '{0: 91, 1: 104, 2: 104, 3: 71, 4: 75}'
+  eval_recall: 0.9365796263740984
+  eval_runtime: 3.8176
+  eval_samples_per_second: 116.566
+  eval_steps_per_second: 3.667
