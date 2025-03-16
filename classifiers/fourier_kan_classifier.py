@@ -145,17 +145,27 @@ class FourierKANClassifier(nn.Module):
     A simplified and more stable FourierKAN classifier that combines traditional MLP 
     components with Fourier-based KAN units for improved text classification.
     """
-    def __init__(self, model_path, num_labels, dropout_rate=0.1, num_frequencies=8):
+    def __init__(self, model_path, num_labels, dropout_rate=0.1, num_frequencies=8, use_multilayer=False, num_layers_to_use=3):
         super().__init__()
         self.transformer = AutoModel.from_pretrained(model_path, local_files_only=True)
         hidden_size = self.transformer.config.hidden_size
         self.num_labels = num_labels
+        self.use_multilayer = use_multilayer
+        self.num_layers_to_use = num_layers_to_use
         
         # Smaller intermediate dimensions for better training stability
         kan_hidden_dim = min(hidden_size, 512)
         
         # Layer normalization for transformer outputs
         self.norm_layer = nn.LayerNorm(hidden_size)
+        
+        # Initialize input dimension based on whether we're using multiple layers
+        input_dim = hidden_size
+        if use_multilayer:
+            input_dim = hidden_size * num_layers_to_use
+            # Add projection layer to handle the increased dimensions
+            self.layer_proj = nn.Linear(input_dim, hidden_size)
+            self.proj_norm = nn.LayerNorm(hidden_size)
         
         # Initial MLP projection for stability
         self.input_proj = nn.Sequential(
@@ -172,36 +182,45 @@ class FourierKANClassifier(nn.Module):
             num_frequencies
         )
         
-        # Classifier head
-        self.classifier = nn.Sequential(
-            nn.LayerNorm(kan_hidden_dim),
-            nn.Dropout(dropout_rate),
-            nn.Linear(kan_hidden_dim, kan_hidden_dim // 2),
-            nn.GELU(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(kan_hidden_dim // 2, num_labels)
-        )
+        # Simple linear classifier after Fourier KAN processing
+        # Apply layer norm before the classifier for stability
+        self.layer_norm_final = nn.LayerNorm(kan_hidden_dim)
+        self.classifier = nn.Linear(kan_hidden_dim, num_labels)
         
         # Initialize the weights
         self._init_weights()
     
     def _init_weights(self):
-        # Initialize classifier layers with small weights
-        for module in self.classifier.modules():
-            if isinstance(module, nn.Linear):
-                module.weight.data.normal_(mean=0.0, std=0.02)
-                if module.bias is not None:
-                    module.bias.data.zero_()
+        # Initialize classifier layer with small weights
+        self.classifier.weight.data.normal_(mean=0.0, std=0.02)
+        if self.classifier.bias is not None:
+            self.classifier.bias.data.zero_()
 
     def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
-        # Get transformer outputs
-        outputs = self.transformer(input_ids=input_ids, attention_mask=attention_mask)
+        # Get transformer outputs with output_hidden_states to get all layers
+        outputs = self.transformer(
+            input_ids=input_ids, 
+            attention_mask=attention_mask,
+            output_hidden_states=self.use_multilayer  # Only get hidden states if needed
+        )
         
-        # Use the [CLS] token representation
-        pooled_output = outputs.last_hidden_state[:, 0]
-        
-        # Normalize outputs
-        x = self.norm_layer(pooled_output)
+        if self.use_multilayer:
+            # Get the specified number of last layers from hidden states
+            hidden_states = outputs.hidden_states
+            # Use last num_layers_to_use layers
+            last_layers = hidden_states[-self.num_layers_to_use:]
+            
+            # Extract [CLS] token from each layer and concatenate
+            cls_outputs = [layer[:, 0] for layer in last_layers]
+            pooled_output = torch.cat(cls_outputs, dim=-1)
+            
+            # Project the concatenated layers down to original hidden size
+            x = self.layer_proj(pooled_output)
+            x = self.proj_norm(x)
+        else:
+            # Use the [CLS] token representation from last layer
+            pooled_output = outputs.last_hidden_state[:, 0]
+            x = self.norm_layer(pooled_output)
         
         # Initial projection
         x = self.input_proj(x)
@@ -209,7 +228,8 @@ class FourierKANClassifier(nn.Module):
         # Apply KAN unit
         x = self.kan_unit(x)
         
-        # Apply classifier
+        # Apply final layer norm and classifier
+        x = self.layer_norm_final(x)
         logits = self.classifier(x)
         
         # Calculate loss if labels provided

@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -10,7 +11,7 @@ def train_classifier(
     model_path,
     data_path,
     num_epochs=5,
-    batch_size=8,
+    batch_size=16,
     learning_rate=2e-5,
     weight_decay=0.01,
     early_stopping_patience=2,
@@ -21,10 +22,13 @@ def train_classifier(
     train_size=0.6,
     val_size=0.2,
     test_size=0.2,
-    metric_for_best_model='matthews_correlation',
+    metric_for_best_model="matthews_correlation",
     num_frequencies=8,
     num_wavelets=16,
-    wavelet_type='mixed'
+    wavelet_type="mixed",
+    use_multilayer=False,
+    num_layers_to_use=3,
+    optimizer_type="adamw",
 ):
     """Train a single classifier and save its results"""
     # Set default output directories if not provided
@@ -32,33 +36,37 @@ def train_classifier(
         output_dir = f"./results/{classifier_type}"
     if save_dir is None:
         save_dir = f"./models/{classifier_type}"
-    
+
     # Create a small test model to verify GPU usage
     import torch
-    
+
     # Explicitly print detailed GPU info
     if torch.cuda.is_available():
         print(f"\nCUDA available: {torch.cuda.is_available()}")
         print(f"CUDA device count: {torch.cuda.device_count()}")
         print(f"CUDA current device: {torch.cuda.current_device()}")
         print(f"CUDA device name: {torch.cuda.get_device_name(0)}")
-    
+
     # Check for MPS (Apple Silicon)
     if hasattr(torch.backends, "mps"):
         print(f"\nMPS available: {torch.backends.mps.is_available()}")
         print(f"MPS built: {torch.backends.mps.is_built()}")
-    
+
     # Create test tensor to verify device placement
     print("\nTesting GPU with tensor operation:")
-    device = torch.device("cuda" if torch.cuda.is_available() 
-                        else "mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() 
-                        else "cpu")
+    device = torch.device(
+        "cuda"
+        if torch.cuda.is_available()
+        else "mps"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+        else "cpu"
+    )
     print(f"Using device: {device}")
-    
+
     # Create test tensor
     x = torch.ones(1, 3).to(device)
     print(f"Test tensor device: {x.device}")
-    
+
     # Create trainer instance with all parameters
     trainer = TextClassificationTrainer(
         model_path=model_path,
@@ -81,43 +89,61 @@ def train_classifier(
     print(f"Training {classifier_type.upper()} classifier")
 
     # Pass the model-specific parameters
-    model_params = {}
-    if classifier_type in ['cnn', 'bilstm', 'attention', 'custom']:
-        model_params['dropout_rate'] = dropout_rate
-    elif classifier_type == 'fourier_kan':
-        model_params['dropout_rate'] = dropout_rate
-        model_params['num_frequencies'] = num_frequencies
-    elif classifier_type == 'wavelet_kan':
-        model_params['dropout_rate'] = dropout_rate
-        model_params['num_wavelets'] = num_wavelets
-        model_params['wavelet_type'] = wavelet_type
-        
-    # Setup early stopping in callback
-    callback_params = {
-        'patience': early_stopping_patience,
-        'model_type': classifier_type
+    model_params = {
+        "dropout_rate": dropout_rate,
+        "use_multilayer": use_multilayer,
+        "num_layers_to_use": num_layers_to_use,
+        "optimizer_type": optimizer_type
     }
     
+    if classifier_type == "fourier_kan":
+        model_params["num_frequencies"] = num_frequencies
+    elif classifier_type == "wavelet_kan":
+        model_params["num_wavelets"] = num_wavelets
+        model_params["wavelet_type"] = wavelet_type
+
+    # Setup early stopping in callback
+    callback_params = {
+        "patience": early_stopping_patience,
+        "model_type": classifier_type,
+        "metric_for_best_model": metric_for_best_model  # Use the same metric for callback
+    }
+
+    # Handle special pooling configurations that use the CustomClassifier
+    actual_model_type = classifier_type
+    if classifier_type == "mean_pooling":
+        actual_model_type = "custom"
+        model_params["pooling_strategy"] = "mean"
+        model_params["dropout_rate"] = dropout_rate
+        model_params["use_multilayer"] = use_multilayer
+        model_params["num_layers_to_use"] = num_layers_to_use
+    elif classifier_type == "combined_pooling":
+        actual_model_type = "custom"
+        model_params["pooling_strategy"] = "combined"
+        model_params["dropout_rate"] = dropout_rate
+        model_params["use_multilayer"] = use_multilayer
+        model_params["num_layers_to_use"] = num_layers_to_use
+            
     # Setup trainer with the specified model type and parameters
     trainer.setup_trainer(
-        tokenized_datasets, 
-        model_type=classifier_type,
+        tokenized_datasets,
+        model_type=actual_model_type,
         metric_for_best_model=metric_for_best_model,
         model_params=model_params,
-        callback_params=callback_params
+        callback_params=callback_params,
     )
 
     # Train
     trainer.train(tokenized_datasets)
 
     # Generate and save learning curves
-    if trainer.learning_curve_callback:
+    if trainer.training_monitor_callback:
         # Save metrics to CSV
-        metrics_path = trainer.learning_curve_callback.save_metrics()
+        metrics_path = trainer.training_monitor_callback.save_metrics()
         print(f"Metrics saved to {metrics_path}")
 
         # Plot and save learning curves
-        curves_path = trainer.learning_curve_callback.plot_learning_curves()
+        curves_path = trainer.training_monitor_callback.plot_learning_curves()
         print(f"Learning curves saved to {curves_path}")
 
     # Evaluate
@@ -132,10 +158,10 @@ def train_classifier(
 
 
 def train_all_classifiers(
-    model_path, 
-    data_path, 
-    num_epochs=5, 
-    batch_size=8,
+    model_path,
+    data_path,
+    num_epochs=5,
+    batch_size=16,
     learning_rate=2e-5,
     weight_decay=0.01,
     early_stopping_patience=2,
@@ -146,19 +172,34 @@ def train_all_classifiers(
     train_size=0.6,
     val_size=0.2,
     test_size=0.2,
-    metric_for_best_model='matthews_correlation',
+    metric_for_best_model="matthews_correlation",
     num_frequencies=8,
     num_wavelets=16,
-    wavelet_type='mixed',
-    classifier_types=None
+    wavelet_type="mixed",
+    use_multilayer=False,
+    num_layers_to_use=3,
+    optimizer_type="adamw",
+    classifier_types=None,
 ):
     """Train multiple classifiers and create a comparison"""
     if classifier_types is None:
-        classifier_types = ["standard", "custom", "bilstm", "attention", "cnn", "fourier_kan", "wavelet_kan"]
+        classifier_types = [
+            "attention",
+            "bilstm", 
+            "cnn",
+            "combined_pooling",
+            "fourier_kan",
+            "mean_pooling",
+            "standard",
+            "wavelet_kan",
+        ]
 
     results = {}
-
-    for classifier_type in classifier_types:
+    
+    # Sort classifiers alphabetically for consistent ordering
+    sorted_classifier_types = sorted(classifier_types)
+    
+    for classifier_type in sorted_classifier_types:
         print(f"\n{'=' * 50}")
         print(f"Training {classifier_type.upper()} classifier")
         print(f"{'=' * 50}\n")
@@ -187,14 +228,17 @@ def train_all_classifiers(
                 metric_for_best_model=metric_for_best_model,
                 num_frequencies=num_frequencies,
                 num_wavelets=num_wavelets,
-                wavelet_type=wavelet_type
+                wavelet_type=wavelet_type,
+                use_multilayer=use_multilayer,
+                num_layers_to_use=num_layers_to_use,
+                optimizer_type=optimizer_type,
             )
             results[classifier_type] = test_results
         except Exception as e:
             print(f"Error training {classifier_type} classifier: {e}")
 
     # Create comparison plot
-    compare_classifiers(classifier_types)
+    compare_classifiers(sorted_classifier_types)
 
     # Create results summary dataframe
     summary = pd.DataFrame.from_dict(results, orient="index")
@@ -219,7 +263,7 @@ def compare_classifiers(classifiers=None):
         classifiers: List of classifier names to compare. If None, uses all available.
     """
     if classifiers is None:
-        classifiers = ["standard", "custom", "bilstm", "attention", "cnn"]
+        classifiers = ["attention", "bilstm", "cnn", "combined_pooling", "fourier_kan", "mean_pooling", "standard", "wavelet_kan"]
 
     # Set up the figure with 3x2 grid (to include precision and recall)
     fig, axes = plt.subplots(3, 2, figsize=(18, 21))
@@ -267,7 +311,7 @@ def compare_classifiers(classifiers=None):
                         ax=axes[0, 1],
                         color=colors[i],
                     )
-                
+
                 # Plot Precision
                 if "eval_precision" in eval_metrics.columns:
                     sns.lineplot(
@@ -278,7 +322,7 @@ def compare_classifiers(classifiers=None):
                         ax=axes[1, 0],
                         color=colors[i],
                     )
-                
+
                 # Plot Recall
                 if "eval_recall" in eval_metrics.columns:
                     sns.lineplot(
@@ -289,7 +333,7 @@ def compare_classifiers(classifiers=None):
                         ax=axes[1, 1],
                         color=colors[i],
                     )
-                
+
                 # Plot F1 Score (macro)
                 if "eval_f1_macro" in eval_metrics.columns:
                     sns.lineplot(
@@ -300,7 +344,7 @@ def compare_classifiers(classifiers=None):
                         ax=axes[2, 0],
                         color=colors[i],
                     )
-                
+
                 # Plot Matthews Correlation
                 if "eval_matthews_correlation" in eval_metrics.columns:
                     sns.lineplot(
@@ -324,22 +368,22 @@ def compare_classifiers(classifiers=None):
     axes[0, 1].set_xlabel("Epoch", fontsize=12)
     axes[0, 1].set_ylabel("Accuracy", fontsize=12)
     axes[0, 1].legend(fontsize=10)
-    
+
     axes[1, 0].set_title("Precision Comparison", fontsize=14)
     axes[1, 0].set_xlabel("Epoch", fontsize=12)
     axes[1, 0].set_ylabel("Precision", fontsize=12)
     axes[1, 0].legend(fontsize=10)
-    
+
     axes[1, 1].set_title("Recall Comparison", fontsize=14)
     axes[1, 1].set_xlabel("Epoch", fontsize=12)
     axes[1, 1].set_ylabel("Recall", fontsize=12)
     axes[1, 1].legend(fontsize=10)
-    
+
     axes[2, 0].set_title("F1 Score (Macro) Comparison", fontsize=14)
     axes[2, 0].set_xlabel("Epoch", fontsize=12)
     axes[2, 0].set_ylabel("F1 Score", fontsize=12)
     axes[2, 0].legend(fontsize=10)
-    
+
     axes[2, 1].set_title("Matthews Correlation Comparison", fontsize=14)
     axes[2, 1].set_xlabel("Epoch", fontsize=12)
     axes[2, 1].set_ylabel("MCC", fontsize=12)

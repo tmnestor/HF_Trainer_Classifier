@@ -1,20 +1,26 @@
 best_params:
-  batch_size: 8
-  dropout_rate: 0.37050057329972363
-  learning_rate: 9.349760711082119e-05
-  weight_decay: 0.007846357563489375
-best_value: 0.9380114917279767
+  batch_size: 16
+  dropout_rate: 0.2580503754609679
+  num_layers_to_use: 1
+  optimizer_type: adamw
+  use_multilayer: false
+  weight_decay: 0.007369075727995949
+best_value: 0.9388
 classifier_type: bilstm
-metric: matthews_correlation
+metric: f1_macro
 test_results:
-  epoch: 6.0
-  eval_accuracy: 0.950561797752809
-  eval_f1_macro: 0.9496150343639584
-  eval_loss: 0.35499075055122375
-  eval_matthews_correlation: 0.9381038531022771
-  eval_precision: 0.9512235185336271
-  eval_pred_distribution: '{0: 84, 1: 102, 2: 103, 3: 71, 4: 85}'
-  eval_recall: 0.9488248554867974
-  eval_runtime: 4.9721
-  eval_samples_per_second: 89.499
-  eval_steps_per_second: 11.263
+  eval_accuracy: 0.9303
+  eval_f1_macro: 0.9279
+  eval_loss: 0.3653
+  eval_matthews_correlation: 0.9127
+  eval_precision: 0.9296
+  eval_recall: 0.9268
+training_metadata:
+  architecture:
+    classifier_type: bilstm
+    dropout_rate: 0.2580503754609679
+    num_layers_to_use: 1
+    use_multilayer: false
+  batch_size: 16
+  optimizer: adamw
+  timestamp: 2025-03-16 19:10:49 GMT+10

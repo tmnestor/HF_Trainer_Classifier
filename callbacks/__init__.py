@@ -1,3 +1,3 @@
-from .learning_curve_callback import LearningCurveCallback
+from .training_monitor_callback import TrainingMonitorCallback
 
-__all__ = ["LearningCurveCallback"]
+__all__ = ["TrainingMonitorCallback"]

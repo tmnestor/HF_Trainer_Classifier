@@ -3,7 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 import os
-from transformers import AutoModel
+import numpy as np
+from transformers import AutoModel, AutoConfig
 from torch.nn import GELU
 
 # Set debug mode
@@ -63,25 +64,100 @@ class MexicanHatWaveletFunctions:
         return MexicanHatWaveletFunctions.wavelet_function(scaled_x)
 
 
-class MorletWaveletFunctions:
+class DaubechiesWaveletFunctions:
     """
-    Implementation of Morlet wavelet basis functions.
-    These are well-localized in both time and frequency.
+    Implementation of Daubechies wavelet basis functions.
+    These are compact orthogonal wavelets with maximum number of vanishing moments.
+    We implement low-order db2 and db4, which are well-suited for discrete signals.
     """
-
+    # Daubechies filter coefficients (only low-order ones needed for text classification)
+    # DB2 (4 coefficients)
+    DB2_LO = torch.tensor([0.4829629131445341, 0.8365163037378079, 0.2241438680420134, -0.1294095225512604])
+    DB2_HI = torch.tensor([-0.1294095225512604, -0.2241438680420134, 0.8365163037378079, -0.4829629131445341])
+    
+    # DB4 (8 coefficients)
+    DB4_LO = torch.tensor([
+        0.1629171572809054, 0.5055922216746659, 0.4461007108737368, -0.0197721859913265,
+        -0.1323683939878645, 0.0218081502370024, 0.0233534968567756, -0.0074578275060427
+    ])
+    DB4_HI = torch.tensor([
+        -0.0074578275060427, -0.0233534968567756, 0.0218081502370024, 0.1323683939878645,
+        -0.0197721859913265, -0.4461007108737368, 0.5055922216746659, -0.1629171572809054
+    ])
+    
     @staticmethod
-    def wavelet_function(x, omega0=5.0):
-        """Morlet wavelet function (complex sinusoid modulated by Gaussian)"""
-        # The normalized real part of the Morlet wavelet
-        return torch.cos(omega0 * x) * torch.exp(-0.5 * x**2)
-
+    def simplified_transform(x, filter_coeffs):
+        """
+        Simplified wavelet transform for scalar features in text classification.
+        For text classification, we're dealing with feature embeddings not signals,
+        so we don't need a full wavelet transform. We can use the filter coefficients
+        to create a simple feature transformation.
+        """
+        # Ensure we're working with a scalar or small vector
+        if torch.is_tensor(x):
+            # Extract a single scalar value if possible
+            if x.numel() == 1:
+                value = x.item()
+            else:
+                # Take the mean of the first few values if it's a vector
+                value = x[:min(4, x.numel())].mean().item()
+        else:
+            value = float(x)
+            
+        # Apply a non-linear transformation based on filter coefficients
+        # This preserves the spirit of wavelet transforms while being much simpler
+        device = filter_coeffs.device
+        filter_sum = filter_coeffs.abs().sum().item()
+        
+        # Create a feature that captures the essence of wavelet transform
+        # but works on scalar inputs
+        feature = torch.tensor(
+            [value * math.sin(coef * 5) for coef in filter_coeffs], 
+            device=device
+        ).mean()
+        
+        # Normalize by filter magnitude
+        if filter_sum > 0:
+            feature = feature / (filter_sum * 0.1)
+        
+        # Return as a scalar
+        return feature
+    
     @staticmethod
-    def wavelet_transform(x, scale, translation, omega0=5.0):
-        """Apply Morlet wavelet with given scale and translation"""
-        # Normalize x to the wavelet domain
-        scaled_x = (x - translation) / scale
-        # Apply wavelet function
-        return MorletWaveletFunctions.wavelet_function(scaled_x, omega0)
+    def db2_wavelet_transform(x, scale, translation):
+        """Apply db2 wavelet transform with given scale and translation"""
+        # Scale modulates the filter coefficients
+        scale_factor = torch.sigmoid(scale).item() * 2.0  # Keep in reasonable range
+        
+        # Translation affects the filter shift
+        shift = torch.clamp(torch.round(translation * 4).long(), 0, 3).item()  # Limit to filter size
+        
+        # Shift the filter based on translation
+        shifted_filter = torch.roll(DaubechiesWaveletFunctions.DB2_HI, shifts=shift)
+        
+        # Scale the filter
+        scaled_filter = shifted_filter * scale_factor
+        
+        # Apply simplified wavelet transform for scalar features
+        return DaubechiesWaveletFunctions.simplified_transform(x, scaled_filter)
+    
+    @staticmethod
+    def db4_wavelet_transform(x, scale, translation):
+        """Apply db4 wavelet transform with given scale and translation"""
+        # Scale modulates the filter coefficients
+        scale_factor = torch.sigmoid(scale).item() * 2.0  # Keep in reasonable range
+        
+        # Translation affects the filter shift
+        shift = torch.clamp(torch.round(translation * 8).long(), 0, 7).item()  # Limit to filter size
+        
+        # Shift the filter based on translation
+        shifted_filter = torch.roll(DaubechiesWaveletFunctions.DB4_HI, shifts=shift)
+        
+        # Scale the filter
+        scaled_filter = shifted_filter * scale_factor
+        
+        # Apply simplified wavelet transform for scalar features
+        return DaubechiesWaveletFunctions.simplified_transform(x, scaled_filter)
 
 
 class WaveletLayer(nn.Module):
@@ -134,11 +210,11 @@ class WaveletLayer(nn.Module):
 
         # Separate parameters for different wavelet types if using mixed
         if wavelet_type == "mixed":
-            # Number of each type of wavelet - ensure proper division
+            # Number of each type of wavelet - focus on Haar and Daubechies
             total = num_wavelets
             self.num_haar = total // 3
-            self.num_mexican = total // 3
-            self.num_morlet = total - (self.num_haar + self.num_mexican)
+            self.num_db2 = total // 3
+            self.num_db4 = total - (self.num_haar + self.num_db2)
 
         # For high frequency Haar, use grouped wavelet outputs
         if self.high_frequency:
@@ -171,9 +247,9 @@ class WaveletLayer(nn.Module):
             haar_scales = torch.logspace(
                 -0.5, 0.5, self.num_haar
             )  # Safer minimum scale
-            mexican_scales = torch.logspace(-0.3, 0.7, self.num_mexican)
-            morlet_scales = torch.logspace(-0.3, 0.7, self.num_morlet)
-            self.scales.data = torch.cat([haar_scales, mexican_scales, morlet_scales])
+            db2_scales = torch.logspace(-0.3, 0.7, self.num_db2)
+            db4_scales = torch.logspace(-0.3, 0.7, self.num_db4)
+            self.scales.data = torch.cat([haar_scales, db2_scales, db4_scales])
         elif self.high_frequency:
             # For high frequency models, use specialized initialization
             # Use more uniform scale distribution for better coverage
@@ -190,10 +266,10 @@ class WaveletLayer(nn.Module):
         if hasattr(self, "num_haar") and not self.high_frequency:
             # Different initialization for different wavelet types
             haar_trans = torch.linspace(-1.5, 1.5, self.num_haar)  # Reduced range
-            mexican_trans = torch.linspace(-1.5, 1.5, self.num_mexican)
-            morlet_trans = torch.linspace(-1.5, 1.5, self.num_morlet)
+            db2_trans = torch.linspace(-1.5, 1.5, self.num_db2)
+            db4_trans = torch.linspace(-1.5, 1.5, self.num_db4)
             self.translations.data = torch.cat(
-                [haar_trans, mexican_trans, morlet_trans]
+                [haar_trans, db2_trans, db4_trans]
             )
         elif self.high_frequency:
             # For high frequency models, create a more structured grid of translations
@@ -365,10 +441,17 @@ class WaveletLayer(nn.Module):
                         )
                     )
 
-            elif self.wavelet_type == "morlet":
-                # Apply Morlet wavelets
+            elif self.wavelet_type == "db2":
+                # Apply Daubechies 2 wavelets
                 for i in range(self.num_wavelets):
-                    wavelet_outputs[:, i] = MorletWaveletFunctions.wavelet_transform(
+                    wavelet_outputs[:, i] = DaubechiesWaveletFunctions.db2_wavelet_transform(
+                        wavelet_input[:, i], self.scales[i], self.translations[i]
+                    )
+                    
+            elif self.wavelet_type == "db4":
+                # Apply Daubechies 4 wavelets
+                for i in range(self.num_wavelets):
+                    wavelet_outputs[:, i] = DaubechiesWaveletFunctions.db4_wavelet_transform(
                         wavelet_input[:, i], self.scales[i], self.translations[i]
                     )
 
@@ -381,17 +464,17 @@ class WaveletLayer(nn.Module):
                         wavelet_input[:, i], self.scales[i], self.translations[i]
                     )
 
-                # Mexican Hat wavelets
-                for i in range(self.num_haar, self.num_haar + self.num_mexican):
+                # Daubechies 2 wavelets
+                for i in range(self.num_haar, self.num_haar + self.num_db2):
                     wavelet_outputs[:, i] = (
-                        MexicanHatWaveletFunctions.wavelet_transform(
+                        DaubechiesWaveletFunctions.db2_wavelet_transform(
                             wavelet_input[:, i], self.scales[i], self.translations[i]
                         )
                     )
 
-                # Morlet wavelets
-                for i in range(self.num_haar + self.num_mexican, self.num_wavelets):
-                    wavelet_outputs[:, i] = MorletWaveletFunctions.wavelet_transform(
+                # Daubechies 4 wavelets
+                for i in range(self.num_haar + self.num_db2, self.num_wavelets):
+                    wavelet_outputs[:, i] = DaubechiesWaveletFunctions.db4_wavelet_transform(
                         wavelet_input[:, i], self.scales[i], self.translations[i]
                     )
 
@@ -496,7 +579,8 @@ class WaveletKANUnit(nn.Module):
 class WaveletKANClassifier(nn.Module):
     """
     Text classifier using Wavelet-based Kolmogorov-Arnold Networks.
-    Optimized for Haar wavelets which previously achieved >0.94 Matthew's correlation.
+    Focuses on compact support wavelets like Haar and Daubechies that are well-suited for
+    discrete data like text embeddings.
     """
 
     def __init__(
@@ -505,14 +589,31 @@ class WaveletKANClassifier(nn.Module):
         num_labels,
         dropout_rate=0.1,
         num_wavelets=16,
-        wavelet_type="haar",
+        wavelet_type="mixed", # Can be "mixed", "haar", "db2", or "db4"
+        use_multilayer=False,
+        num_layers_to_use=3
     ):
         super().__init__()
-        self.transformer = AutoModel.from_pretrained(model_path, local_files_only=True)
+        
+        # Configure model to output all hidden states if using multilayer
+        if use_multilayer:
+            config = AutoConfig.from_pretrained(model_path, output_hidden_states=True, local_files_only=True)
+            self.transformer = AutoModel.from_pretrained(model_path, config=config, local_files_only=True)
+        else:
+            self.transformer = AutoModel.from_pretrained(model_path, local_files_only=True)
+            
         hidden_size = self.transformer.config.hidden_size
         self.num_labels = num_labels
         self.wavelet_type = wavelet_type
         self.num_wavelets = num_wavelets
+        self.use_multilayer = use_multilayer
+        # ModernBERT uses 'layers' instead of 'encoder.layer'
+        if hasattr(self.transformer, 'layers'):
+            self.num_layers_to_use = min(num_layers_to_use, len(self.transformer.layers))
+        elif hasattr(self.transformer, 'encoder') and hasattr(self.transformer.encoder, 'layer'):
+            self.num_layers_to_use = min(num_layers_to_use, len(self.transformer.encoder.layer))
+        else:
+            self.num_layers_to_use = num_layers_to_use
 
         # For high frequency models, optimize memory usage
         self.optimize_for_high_freq = self.num_wavelets >= 64 and wavelet_type == "haar"
@@ -531,9 +632,16 @@ class WaveletKANClassifier(nn.Module):
         self.norm_layer = nn.LayerNorm(hidden_size)
 
         # For non-Haar wavelet types, add a pooler to handle concatenated outputs
+        # If using multilayer, we'll need a separate pooler for each layer
         if wavelet_type != "haar":
-            # Pooler to handle the concatenated CLS and mean outputs
-            self.pooler = nn.Linear(hidden_size * 2, hidden_size)
+            if use_multilayer:
+                self.poolers = nn.ModuleList([
+                    nn.Linear(hidden_size * 2, hidden_size)
+                    for _ in range(self.num_layers_to_use)
+                ])
+            else:
+                # Single pooler for concatenated outputs (original behavior)
+                self.pooler = nn.Linear(hidden_size * 2, hidden_size)
 
         # Direct path optimized for wavelet types
         # For high-frequency Haar, use more efficient hidden dimension
@@ -543,67 +651,109 @@ class WaveletKANClassifier(nn.Module):
         else:
             # Normal hidden dimensions
             kan_hidden_dim = min(hidden_size, 512 if wavelet_type == "haar" else 256)
+        
+        self.kan_hidden_dim = kan_hidden_dim
 
-        # Initial projection - use a more direct path for Haar wavelets
-        self.input_proj = nn.Sequential(
-            nn.Linear(hidden_size, kan_hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout_rate / 2 if wavelet_type == "haar" else dropout_rate),
-        )
+        # Initial projection - create one per layer if using multilayer
+        if use_multilayer:
+            self.input_projs = nn.ModuleList([
+                nn.Sequential(
+                    nn.Linear(hidden_size, kan_hidden_dim),
+                    nn.GELU(),
+                    nn.Dropout(dropout_rate / 2 if wavelet_type == "haar" else dropout_rate),
+                ) for _ in range(self.num_layers_to_use)
+            ])
+        else:
+            # Original single projection
+            self.input_proj = nn.Sequential(
+                nn.Linear(hidden_size, kan_hidden_dim),
+                nn.GELU(),
+                nn.Dropout(dropout_rate / 2 if wavelet_type == "haar" else dropout_rate),
+            )
 
         # For Haar wavelets, add an extra layer to better learn the features
         if wavelet_type == "haar":
             # Deeper network for Haar wavelets since they performed well before
-            self.mlp = nn.Sequential(
-                nn.Linear(kan_hidden_dim, kan_hidden_dim),
-                nn.GELU(),
-                nn.Dropout(dropout_rate / 3),  # Lower dropout for Haar
-                nn.Linear(kan_hidden_dim, kan_hidden_dim),
-                nn.GELU(),
-                nn.Dropout(dropout_rate / 3),
-            )
+            # For multilayer, create one MLP module per layer
+            if use_multilayer:
+                self.mlps = nn.ModuleList([
+                    nn.Sequential(
+                        nn.Linear(kan_hidden_dim, kan_hidden_dim),
+                        nn.GELU(),
+                        nn.Dropout(dropout_rate / 3),  # Lower dropout for Haar
+                        nn.Linear(kan_hidden_dim, kan_hidden_dim),
+                        nn.GELU(),
+                        nn.Dropout(dropout_rate / 3),
+                    ) for _ in range(self.num_layers_to_use)
+                ])
+            else:
+                # Original single MLP
+                self.mlp = nn.Sequential(
+                    nn.Linear(kan_hidden_dim, kan_hidden_dim),
+                    nn.GELU(),
+                    nn.Dropout(dropout_rate / 3),  # Lower dropout for Haar
+                    nn.Linear(kan_hidden_dim, kan_hidden_dim),
+                    nn.GELU(),
+                    nn.Dropout(dropout_rate / 3),
+                )
         else:
             # Simpler network for other wavelet types
-            self.mlp = nn.Sequential(
-                nn.Linear(kan_hidden_dim, kan_hidden_dim),
-                nn.GELU(),
-                nn.Dropout(dropout_rate / 2),
-            )
+            if use_multilayer:
+                self.mlps = nn.ModuleList([
+                    nn.Sequential(
+                        nn.Linear(kan_hidden_dim, kan_hidden_dim),
+                        nn.GELU(),
+                        nn.Dropout(dropout_rate / 2),
+                    ) for _ in range(self.num_layers_to_use)
+                ])
+            else:
+                # Original single MLP
+                self.mlp = nn.Sequential(
+                    nn.Linear(kan_hidden_dim, kan_hidden_dim),
+                    nn.GELU(),
+                    nn.Dropout(dropout_rate / 2),
+                )
 
         # Wavelet layer with optimized configuration
         # Use more wavelets for Haar type since it performed well before
         actual_num_wavelets = (
             self.num_wavelets * 2 if wavelet_type == "haar" else self.num_wavelets
         )
-        self.wavelet_layer = WaveletLayer(
-            in_features=kan_hidden_dim,
-            out_features=kan_hidden_dim,
-            num_wavelets=actual_num_wavelets,
-            wavelet_type=wavelet_type,
-        )
-
-        # Layer normalization
-        self.norm1 = nn.LayerNorm(kan_hidden_dim)
-
-        # Classifier head - simpler for non-Haar wavelets, more complex for Haar
-        if wavelet_type == "haar":
-            last_linear = nn.Linear(kan_hidden_dim // 2, num_labels)
-            # Mark it as a classifier for special initialization
-            last_linear.is_classifier = True
-
-            self.classifier = nn.Sequential(
-                nn.Dropout(dropout_rate / 3),
-                nn.Linear(kan_hidden_dim, kan_hidden_dim // 2),
-                nn.GELU(),
-                nn.Dropout(dropout_rate / 3),
-                last_linear,
-            )
+        
+        # Create one wavelet layer per transformer layer if using multilayer
+        if use_multilayer:
+            self.wavelet_layers = nn.ModuleList([
+                WaveletLayer(
+                    in_features=kan_hidden_dim,
+                    out_features=kan_hidden_dim,
+                    num_wavelets=actual_num_wavelets,
+                    wavelet_type=wavelet_type,
+                ) for _ in range(self.num_layers_to_use)
+            ])
+            # Also create one normalization layer per transformer layer
+            self.norm_layers = nn.ModuleList([
+                nn.LayerNorm(kan_hidden_dim) for _ in range(self.num_layers_to_use)
+            ])
+            
+            # Add a final layer normalization for the concatenated outputs
+            final_dim = kan_hidden_dim * self.num_layers_to_use if use_multilayer else kan_hidden_dim
+            self.final_norm = nn.LayerNorm(final_dim)
         else:
-            last_linear = nn.Linear(kan_hidden_dim, num_labels)
-            # Mark it as a classifier for special initialization
-            last_linear.is_classifier = True
+            # Original single wavelet layer
+            self.wavelet_layer = WaveletLayer(
+                in_features=kan_hidden_dim,
+                out_features=kan_hidden_dim,
+                num_wavelets=actual_num_wavelets,
+                wavelet_type=wavelet_type,
+            )
+            # Original single normalization layer
+            self.norm1 = nn.LayerNorm(kan_hidden_dim)
 
-            self.classifier = nn.Sequential(nn.Dropout(dropout_rate / 2), last_linear)
+        # Simple linear classifier after Wavelet processing
+        # Input size is multiplied by number of layers when using multilayer
+        classifier_input = kan_hidden_dim * self.num_layers_to_use if use_multilayer else kan_hidden_dim
+        self.classifier = nn.Linear(classifier_input, num_labels)
+        self.classifier.is_classifier = True  # Keep this for initialization purposes
 
         # Weight initialization
         self._init_weights()
@@ -676,55 +826,124 @@ class WaveletKANClassifier(nn.Module):
         # Get transformer outputs
         outputs = self.transformer(input_ids=input_ids, attention_mask=attention_mask)
 
-        hidden_states = outputs.last_hidden_state
-
-        # For Haar wavelets, only use CLS token which worked better in original implementation
-        if self.wavelet_type == "haar":
-            x = hidden_states[:, 0]  # Just [CLS] token for Haar
+        if self.use_multilayer:
+            # Get hidden states from all layers
+            all_hidden_states = outputs.hidden_states
+            
+            # Use the last num_layers_to_use layers
+            selected_hidden_states = all_hidden_states[-self.num_layers_to_use:]
+            
+            # Process each layer separately and then concatenate the results
+            layer_outputs = []
+            
+            for i, hidden_states in enumerate(selected_hidden_states):
+                # For Haar wavelets, only use CLS token which worked better in original implementation
+                if self.wavelet_type == "haar":
+                    x = hidden_states[:, 0]  # Just [CLS] token for Haar
+                else:
+                    # Two pooling strategies for other wavelet types
+                    cls_output = hidden_states[:, 0]  # [CLS] token
+    
+                    # Mean pooling - mask out padding tokens
+                    mask = attention_mask.unsqueeze(-1).expand(hidden_states.size()).float()
+                    mean_output = torch.sum(hidden_states * mask, 1) / torch.clamp(
+                        mask.sum(1), min=1e-9
+                    )
+    
+                    # Concatenate pooling results
+                    pooled = torch.cat([cls_output, mean_output], dim=1)
+    
+                    # Project to original hidden size using the appropriate pooler
+                    x = self.poolers[i](pooled)
+    
+                # Normalize outputs
+                x = self.norm_layer(x)
+    
+                # Initial projection for this layer
+                proj_x = self.input_projs[i](x)
+    
+                # Apply MLP for this layer
+                mlp_output = self.mlps[i](proj_x)
+    
+                # Add residual connection
+                if self.wavelet_type == "haar":
+                    # For Haar, use stronger residual connection (with adjustable scaling)
+                    mlp_output = mlp_output + 0.8 * proj_x
+                else:
+                    # Regular residual for other types
+                    mlp_output = mlp_output + proj_x
+    
+                # Apply wavelet layer for this layer
+                wavelet_output = self.wavelet_layers[i](mlp_output)
+    
+                # Add skip connection - stronger for Haar wavelets
+                if self.wavelet_type == "haar":
+                    combined = 0.7 * mlp_output + wavelet_output
+                else:
+                    combined = mlp_output + wavelet_output
+    
+                # Apply layer normalization
+                normalized = self.norm_layers[i](combined)
+                
+                # Add to outputs list
+                layer_outputs.append(normalized)
+            
+            # Concatenate outputs from all layers
+            final = torch.cat(layer_outputs, dim=1)
+            
+            # Apply final normalization
+            final = self.final_norm(final)
         else:
-            # Two pooling strategies for other wavelet types
-            cls_output = hidden_states[:, 0]  # [CLS] token
-
-            # Mean pooling - mask out padding tokens
-            mask = attention_mask.unsqueeze(-1).expand(hidden_states.size()).float()
-            mean_output = torch.sum(hidden_states * mask, 1) / torch.clamp(
-                mask.sum(1), min=1e-9
-            )
-
-            # Concatenate pooling results
-            pooled = torch.cat([cls_output, mean_output], dim=1)
-
-            # Project to original hidden size
-            x = self.pooler(pooled)
-
-        # Normalize outputs
-        x = self.norm_layer(x)
-
-        # Initial projection
-        proj_x = self.input_proj(x)
-
-        # Apply MLP
-        mlp_output = self.mlp(proj_x)
-
-        # Add residual connection
-        if self.wavelet_type == "haar":
-            # For Haar, use stronger residual connection (with adjustable scaling)
-            mlp_output = mlp_output + 0.8 * proj_x
-        else:
-            # Regular residual for other types
-            mlp_output = mlp_output + proj_x
-
-        # Apply wavelet layer
-        wavelet_output = self.wavelet_layer(mlp_output)
-
-        # Add skip connection - stronger for Haar wavelets
-        if self.wavelet_type == "haar":
-            combined = 0.7 * mlp_output + wavelet_output
-        else:
-            combined = mlp_output + wavelet_output
-
-        # Final normalization
-        final = self.norm1(combined)
+            # Original single-layer processing
+            hidden_states = outputs.last_hidden_state
+    
+            # For Haar wavelets, only use CLS token which worked better in original implementation
+            if self.wavelet_type == "haar":
+                x = hidden_states[:, 0]  # Just [CLS] token for Haar
+            else:
+                # Two pooling strategies for other wavelet types
+                cls_output = hidden_states[:, 0]  # [CLS] token
+    
+                # Mean pooling - mask out padding tokens
+                mask = attention_mask.unsqueeze(-1).expand(hidden_states.size()).float()
+                mean_output = torch.sum(hidden_states * mask, 1) / torch.clamp(
+                    mask.sum(1), min=1e-9
+                )
+    
+                # Concatenate pooling results
+                pooled = torch.cat([cls_output, mean_output], dim=1)
+    
+                # Project to original hidden size
+                x = self.pooler(pooled)
+    
+            # Normalize outputs
+            x = self.norm_layer(x)
+    
+            # Initial projection
+            proj_x = self.input_proj(x)
+    
+            # Apply MLP
+            mlp_output = self.mlp(proj_x)
+    
+            # Add residual connection
+            if self.wavelet_type == "haar":
+                # For Haar, use stronger residual connection (with adjustable scaling)
+                mlp_output = mlp_output + 0.8 * proj_x
+            else:
+                # Regular residual for other types
+                mlp_output = mlp_output + proj_x
+    
+            # Apply wavelet layer
+            wavelet_output = self.wavelet_layer(mlp_output)
+    
+            # Add skip connection - stronger for Haar wavelets
+            if self.wavelet_type == "haar":
+                combined = 0.7 * mlp_output + wavelet_output
+            else:
+                combined = mlp_output + wavelet_output
+    
+            # Final normalization
+            final = self.norm1(combined)
 
         # Classification
         logits = self.classifier(final)

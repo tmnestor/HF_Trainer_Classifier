@@ -15,7 +15,7 @@ This project provides a flexible and extensible solution for text classification
 
 ## Key Features
 
-- **Multiple Classifier Architectures**: Standard linear head, custom MLP, BiLSTM, self-attention, CNN-based, and KAN-based classifiers
+- **Multiple Classifier Architectures**: Standard linear head, BiLSTM, self-attention, CNN-based, and KAN-based classifiers with specialized pooling strategies
 - **Advanced KAN Architectures**: Fourier-based and Wavelet-based implementations of Kolmogorov-Arnold Networks
 - **Differential Learning Rates**: Apply lower learning rates to pre-trained components and higher rates to new classifier layers
 - **Integrated Evaluation**: Built-in metrics tracking and visualization
@@ -31,37 +31,93 @@ Uses Hugging Face's `AutoModelForSequenceClassification` with a simple linear cl
 model = AutoModelForSequenceClassification.from_pretrained("bert-base-uncased", num_labels=5)
 ```
 
-### Custom MLP Classifier
-A multi-layer perceptron with multiple hidden layers, taking the [CLS] token representation as input.
+### Pooling Strategy Classifiers
+Specialized classifiers with different pooling strategies for transformer outputs.
 
 ```python
-# Architecture:
-# Input -> Linear -> ReLU -> Dropout -> Linear -> ReLU -> Dropout -> Linear -> Output
+# Mean Pooling:
+# Transform outputs -> Average across sequence -> Linear layers -> Output
+
+# Combined Pooling:
+# Transform outputs -> [CLS token + Mean pooling] -> Linear layers -> Output
 ```
 
 ### BiLSTM Classifier
-Processes transformer outputs through a bidirectional LSTM to capture sequential dependencies.
+Processes transformer outputs through a bidirectional LSTM to capture sequential dependencies. The BiLSTM architecture excels at modeling contextual information and sequential dependencies in text.
+
+**Key Features:**
+- Bidirectional processing captures context from both directions
+- LSTM cells mitigate vanishing gradient problems and maintain long-range dependencies
+- Support for multilayer transformer representations with separate BiLSTMs for each layer
+- Layer normalization for training stability
+- Configurable hidden size and dropout rate
 
 ```python
 # Architecture:
-# Transformer outputs -> BiLSTM -> Linear -> ReLU -> Dropout -> Linear -> Output
+# Single Layer Mode:
+# Transformer outputs -> BiLSTM -> Final hidden state -> Dropout -> Linear -> Output
+
+# Multilayer Mode:
+# Multiple transformer layers -> Separate BiLSTMs -> Concatenate outputs -> LayerNorm -> Dropout -> Linear -> Output
 ```
+
+The BiLSTM is especially effective when:
+- Sequence order and relationships between tokens are critical
+- The task requires understanding of long-range dependencies
+- Contextual information needs to be preserved
 
 ### Attention Classifier
-Applies a learned attention mechanism to weight the importance of different token positions in the sequence.
+Implements a learned self-attention mechanism that dynamically focuses on the most relevant parts of the input sequence, allowing the model to weight token representations based on their importance to the classification task.
+
+**Key Features:**
+- Self-attention mechanism learns to focus on task-relevant tokens
+- Supports multilayer transformer representations for richer feature extraction
+- Separate attention modules for each transformer layer when using multilayer mode
+- Layer normalization for improved training stability
+- GELU activation for better performance (compared to ReLU)
+- Deeper classification network with regularization
+- Optional label smoothing to reduce overconfidence and improve generalization
 
 ```python
 # Architecture:
-# Transformer outputs -> Self-Attention -> Weighted Sum -> Linear -> ReLU -> Dropout -> Linear -> Output
+# Single Layer Mode:
+# Transformer outputs -> Self-Attention -> Weighted Sum -> Dropout -> MLP (GELU activation) -> Output
+
+# Multilayer Mode:
+# Multiple transformer layers -> Layer-specific attention modules -> Concatenate attention outputs ->
+# LayerNorm -> Dropout -> MLP (GELU activation) -> Output
 ```
+
+The attention classifier excels in scenarios where:
+- Different parts of the input have varying importance to the classification decision
+- The task requires focusing on specific terms or phrases within longer text
+- Interpretability is desired (attention weights can be visualized)
 
 ### CNN Classifier
-Uses multiple parallel convolutional layers with different kernel sizes to capture n-gram patterns of different lengths.
+Employs a convolutional neural network architecture to extract local patterns and n-gram features from transformer outputs. The CNN applies multiple parallel filters with different kernel sizes to capture patterns of varying lengths, effectively modeling different n-gram combinations.
+
+**Key Features:**
+- Multiple parallel CNN filters (kernel sizes 3, 4, and 5) capture diverse linguistic patterns
+- Adaptive max pooling for dimension reduction and feature selection
+- Support for multilayer transformer representations
+- Feature maps optimized to reduce overfitting while maintaining expressiveness
+- Layer normalization for better training stability
+- Configurable dropout rate for regularization
 
 ```python
 # Architecture:
-# Transformer outputs -> Parallel CNNs -> MaxPooling -> Concatenate -> Linear -> ReLU -> Dropout -> Linear -> Output
+# Single Layer Mode:
+# Transformer outputs -> Parallel CNNs (3 kernel sizes) -> Max Pooling -> Concatenate -> Dropout -> Linear -> Output
+
+# Multilayer Mode:
+# Multiple transformer layers -> Layer-specific CNN processing -> Concatenate all extracted features ->
+# LayerNorm -> Dropout -> Linear -> Output
 ```
+
+The CNN classifier is particularly effective for:
+- Capturing local feature patterns regardless of their position in the sequence
+- Identifying key n-gram patterns and phrase-level features
+- Processing longer sequences efficiently through hierarchical feature extraction
 
 ### FourierKAN Classifier
 Implements Kolmogorov-Arnold Networks (KANs) with Fourier basis functions to represent complex transformations more efficiently, often outperforming standard MLPs. KANs are based on the Kolmogorov-Arnold representation theorem, which states that any continuous multivariate function can be represented as combinations of continuous functions of one variable.
@@ -91,39 +147,62 @@ python hf_trainer_classifier.py --classifier fourier_kan --num-frequencies 24 --
 ```
 
 ### WaveletKAN Classifier
-Extends the KAN approach by using wavelets for multi-resolution analysis, capturing both frequency and spatial information simultaneously. Wavelets provide better localized feature extraction than Fourier transforms, excelling at representing both local details and global patterns.
+Extends the KAN approach by implementing wavelet transforms for multi-resolution analysis, simultaneously capturing both frequency and spatial information. Wavelets provide better localized feature extraction than Fourier transforms, excelling at representing both local details and global patterns in the data.
 
 **Key Features:**
-- Supports multiple wavelet families (Haar, Mexican Hat, Morlet)
-- Option to use mixed wavelet types for richer feature extraction
-- Learnable scale and translation parameters
-- Multi-resolution analysis capturing patterns at different scales
-- Strong regularization and residual connections
+- Multiple wavelet families with different mathematical properties:
+  - Haar wavelets for capturing sharp transitions and discontinuities
+  - Daubechies wavelets (db2, db4) for smoother, more compact representations
+  - Option to use mixed wavelet types for complementary feature extraction
+- Learnable scale and translation parameters for adaptive feature extraction
+- Special high-frequency mode for Haar wavelets with memory optimization
+- Multi-resolution analysis capturing patterns at different scales simultaneously
+- Strong residual connections throughout the architecture for better gradient flow
+- Advanced regularization techniques including:
+  - Label smoothing to reduce overconfidence
+  - Focal loss to focus on harder examples
+  - Class balance regularization to prevent single-class predictions
+  - Entropy regularization to encourage diverse predictions
+- Support for multilayer transformer representations
+- Layer normalization for training stability
 
-**Wavelet Families:**
-1. **Haar** - The simplest wavelet with compact support, good for capturing sharp transitions
-2. **Mexican Hat** - Second derivative of Gaussian, good for blob detection and scale-space analysis
-3. **Morlet** - Complex sinusoid modulated by Gaussian, good for capturing local frequency information
+**Wavelet Families Implemented:**
+1. **Haar** - The simplest wavelet family with compact support, excellent for capturing sharp transitions and discontinuities in data
+2. **Daubechies 2 (db2)** - Low-order Daubechies wavelet with 4 coefficients, providing excellent time-frequency localization
+3. **Daubechies 4 (db4)** - Higher-order Daubechies wavelet with 8 coefficients, offering increased smoothness and vanishing moments
+4. **Mixed** - A combination of multiple wavelet families to leverage their complementary properties
 
 ```python
 # Architecture:
-# Transformer outputs -> Normalize -> Initial Projection -> 
-#   WaveletKAN Unit (Norm -> WaveletLayer -> GELU -> Dropout -> Norm -> WaveletLayer -> Residual) ->
-#   LayerNorm -> MLP Classification Head -> Output
+# Single Layer Mode:
+# Transformer outputs -> Pooling (CLS or combined) -> Normalize -> Initial Projection -> MLP ->
+#   WaveletLayer (Linear path + Wavelet transforms) -> Residual connection -> LayerNorm ->
+#   Classification Head with regularization -> Output
+
+# Multilayer Mode:
+# Multiple transformer layers -> Layer-specific wavelet processing ->
+#   Concatenate all processed layers -> Final LayerNorm ->
+#   Classification Head with regularization -> Output
+
+# WaveletLayer detailed:
+# Input -> Direct linear path + 
+#   (Project to wavelet space -> Apply wavelet transforms -> 
+#    GELU activation -> Combine wavelet outputs) ->
+#   Add paths -> LayerNorm -> Output
 ```
 
 **Training Options:**
 ```bash
-# Basic usage with mixed wavelet types
+# Basic usage with mixed wavelet types (combines Haar, db2, and db4)
 python hf_trainer_classifier.py --classifier wavelet_kan
 
 # Using specific wavelet family
 python hf_trainer_classifier.py --classifier wavelet_kan --wavelet-type haar
-python hf_trainer_classifier.py --classifier wavelet_kan --wavelet-type mexican
-python hf_trainer_classifier.py --classifier wavelet_kan --wavelet-type morlet
+python hf_trainer_classifier.py --classifier wavelet_kan --wavelet-type db2
+python hf_trainer_classifier.py --classifier wavelet_kan --wavelet-type db4
 
 # With custom parameters
-python hf_trainer_classifier.py --classifier wavelet_kan --num-frequencies 24 --wavelet-type mixed
+python hf_trainer_classifier.py --classifier wavelet_kan --num-wavelets 24 --wavelet-type mixed
 ```
 
 ## Installation
@@ -169,8 +248,16 @@ python hf_trainer_classifier.py --classifier bilstm --epochs 5 --early-stopping 
 python hf_trainer_classifier.py --classifier fourier_kan --num-frequencies 16
 python hf_trainer_classifier.py --classifier wavelet_kan --wavelet-type mixed --num-frequencies 16
 
+# Train with multilayer pooling (using outputs from multiple transformer layers)
+python hf_trainer_classifier.py --classifier attention --use-multilayer --num-layers-to-use 3
+python hf_trainer_classifier.py --classifier cnn --use-multilayer --num-layers-to-use 4
+python hf_trainer_classifier.py --classifier wavelet_kan --use-multilayer --wavelet-type haar
+
+# Train with combined pooling and multilayer outputs
+python hf_trainer_classifier.py --classifier combined_pooling --use-multilayer --num-layers-to-use 3
+
 # Train all classifiers with custom settings
-python hf_trainer_classifier.py --train-all --batch-size 16 --metric f1_macro
+python hf_trainer_classifier.py --train-all --metric f1_macro
 
 # Compare existing trained models
 python hf_trainer_classifier.py --compare
@@ -190,7 +277,7 @@ python hf_trainer_classifier.py --train --classifier wavelet_kan
 ```
 usage: hf_trainer_classifier.py [-h] [--train | --train-all | --compare | --tune | --tune-all]
                                [--model-name MODEL_NAME] [--model-path MODEL_PATH]
-                               [--classifier {standard,custom,bilstm,attention,cnn,fourier_kan,wavelet_kan}]
+                               [--classifier {standard,bilstm,attention,cnn,fourier_kan,wavelet_kan,mean_pooling,combined_pooling}]
                                [--classifiers CLASSIFIERS [CLASSIFIERS ...]]
                                [--data-path DATA_PATH] [--max-length MAX_LENGTH]
                                [--train-size TRAIN_SIZE] [--val-size VAL_SIZE]
@@ -202,7 +289,8 @@ usage: hf_trainer_classifier.py [-h] [--train | --train-all | --compare | --tune
                                [--learning-rate LEARNING_RATE] [--weight-decay WEIGHT_DECAY]
                                [--dropout DROPOUT] [--num-frequencies NUM_FREQUENCIES]
                                [--num-wavelets NUM_WAVELETS]
-                               [--wavelet-type {mixed,haar,mexican,morlet}]
+                               [--wavelet-type {mixed,haar,db2,db4}]
+                               [--use-multilayer] [--num-layers-to-use NUM_LAYERS_TO_USE]
                                [--no-cuda] [--output-dir OUTPUT_DIR] [--save-dir SAVE_DIR]
 ```
 
@@ -221,7 +309,7 @@ data_path = Path(os.environ.get("DATADIR", ".")) / "your-dataset-folder" / "your
 
 # Train a single classifier
 results = train_classifier(
-    classifier_type="custom",
+    classifier_type="attention",
     model_path=model_path,
     data_path=data_path,
     num_epochs=5,
@@ -251,6 +339,27 @@ results = train_classifier(
     wavelet_type="mixed"
 )
 
+# Train a classifier with the multilayer approach
+results = train_classifier(
+    classifier_type="attention",
+    model_path=model_path,
+    data_path=data_path,
+    num_epochs=5,
+    dropout_rate=0.2,
+    use_multilayer=True,  # Enable multilayer output
+    num_layers_to_use=3   # Use the last 3 transformer layers
+)
+
+# Train with combined pooling and multilayer approach
+results = train_classifier(
+    classifier_type="combined_pooling",  # This uses the custom classifier with combined pooling
+    model_path=model_path,
+    data_path=data_path,
+    num_epochs=5,
+    use_multilayer=True,          # Enable multilayer output
+    num_layers_to_use=4           # Use the last 4 transformer layers
+)
+
 # Train and compare multiple classifiers
 summary = train_all_classifiers(
     model_path=model_path,
@@ -258,9 +367,11 @@ summary = train_all_classifiers(
     num_epochs=5,
     classifier_types=["standard", "custom", "bilstm", "attention", "cnn", "fourier_kan", "wavelet_kan"],
     metric_for_best_model="matthews_correlation",
-    num_frequencies=16,  # For FourierKAN
-    num_wavelets=16,     # For WaveletKAN
-    wavelet_type="mixed" # For WaveletKAN
+    num_frequencies=16,    # For FourierKAN
+    num_wavelets=16,       # For WaveletKAN
+    wavelet_type="mixed",  # For WaveletKAN
+    use_multilayer=True,   # Enable multilayer output for all classifiers
+    num_layers_to_use=3    # Use the last 3 transformer layers for all classifiers
 )
 
 # Tune hyperparameters for a classifier
@@ -310,7 +421,7 @@ import json
 from pathlib import Path
 from transformers import AutoTokenizer
 from models import TextClassificationTrainer
-from classifiers import CustomClassifier, FourierKANClassifier, WaveletKANClassifier
+from classifiers import FourierKANClassifier, WaveletKANClassifier, AttentionClassifier
 
 # Load the model and tokenizer (using local_files_only to prevent HF downloads)
 model_path = Path("path/to/saved/model")
@@ -323,7 +434,7 @@ with open(model_path / "label_mapping.json", "r") as f:
     id_to_label = mapping["id_to_label"]
 
 # Load the model (choose the appropriate classifier class)
-# model = CustomClassifier(base_model_path, num_labels=len(id_to_label))
+# model = AttentionClassifier(base_model_path, num_labels=len(id_to_label))
 # model = FourierKANClassifier(base_model_path, num_labels=len(id_to_label))
 model = WaveletKANClassifier(base_model_path, num_labels=len(id_to_label))
 model.load_state_dict(torch.load(model_path / "pytorch_model.bin"))
@@ -419,9 +530,9 @@ HF_Trainer_Classifier/
 │   ├── attention_classifier.py
 │   ├── bilstm_classifier.py
 │   ├── cnn_classifier.py
-│   ├── custom_classifier.py
+│   ├── custom_classifier.py       # Used by mean_pooling and combined_pooling
 │   ├── fourier_kan_classifier.py  # Fourier-based KAN classifier
-│   └── wavelet_kan_classifier.py  # Wavelet-based KAN classifier with multiple wavelet families
+│   └── wavelet_kan_classifier.py  # Wavelet-based KAN classifier with Haar and Daubechies wavelets
 ├── models/                     # Core training components
 │   ├── __init__.py
 │   └── text_classification_trainer.py
@@ -577,6 +688,26 @@ flowchart TB
 
 ## Advanced Features
 
+### Multilayer Representation
+
+The classifiers can leverage outputs from multiple transformer layers for improved performance:
+
+- **Multi-Layer Output**: Access hidden states from multiple transformer layers instead of just the final layer
+- **Wider Representations**: Concatenate outputs from multiple layers for richer feature extraction
+- **Layer Combination**: Apply the same classifier architecture to each layer and combine results
+- **Pooling Strategies**: Use different pooling strategies (CLS, mean, combined) with multilayer outputs
+- **Configurable Depth**: Control how many layers to use with the `num_layers_to_use` parameter
+- **Multiple Architectures**: Available for all classifier types (attention, CNN, custom, KAN, etc.)
+- **Standardized Hyperparameters**: Batch size (16) and learning rate schedules are standardized across all models for fair comparison
+
+```bash
+# Use with any classifier type
+python hf_trainer_classifier.py --classifier attention --use-multilayer --num-layers-to-use 3
+
+# Combine with pooling strategies
+python hf_trainer_classifier.py --classifier custom --pooling-strategy combined --use-multilayer
+```
+
 ### Environment Variable Integration
 
 The project is designed to work entirely with local models and data via environment variables:
@@ -600,7 +731,7 @@ The project includes comprehensive hyperparameter tuning support using Optuna:
 
 The WaveletKAN classifier incorporates advanced features:
 
-- **Multiple Wavelet Families**: Support for Haar, Mexican Hat, and Morlet wavelets
+- **Multiple Wavelet Families**: Support for Haar, Daubechies 2 (db2), and Daubechies 4 (db4) wavelets
 - **Mixed Wavelet Mode**: Combine different wavelet types for richer feature extraction
 - **High-Frequency Optimization**: Special optimization for models with large numbers of wavelets
 - **Multi-resolution Analysis**: Capture patterns at different scales simultaneously
